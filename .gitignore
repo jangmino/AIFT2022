@@ -146,3 +146,5 @@ dmypy.json
 
 data/
 config/.config.xml
+
+.*.py
