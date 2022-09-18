@@ -1,7 +1,7 @@
 # AIFT2022
 Artificial Intelligence Financial Trading 2022
 
-## TR 목록 조회기반 히스토리 데이터 수집 (완료)
+## TR 목록 조회기반 히스토리 데이터 수집 (브랜치: feature/batch_collect_minute)
 
 |TR 코드|내용|대상|
 |------|---|---|
@@ -18,7 +18,7 @@ Artificial Intelligence Financial Trading 2022
 
 ## 실시간 시스템
 
-프리스테이지
+프리스테이지 (브랜치: feature/real_time_prestage)
 - 로그인
 - 계좌조회
 - 잔고조회
