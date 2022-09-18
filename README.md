@@ -1,7 +1,7 @@
 # AIFT2022
 Artificial Intelligence Financial Trading 2022
 
-## TR 목록 조회기반 히스토리 데이터 수집
+## TR 목록 조회기반 히스토리 데이터 수집 (완료)
 
 |TR 코드|내용|대상|
 |------|---|---|
@@ -15,3 +15,22 @@ Artificial Intelligence Financial Trading 2022
 
 참고
 - pykiwoom: (https://github.com/sharebook-kr/pykiwoom) 의 기능을 활용
+
+## 실시간 시스템
+
+프리스테이지
+- 로그인
+- 계좌조회
+- 잔고조회
+- 미체결조회
+
+메인스테이지
+- 실시간 주식체결정보 구독
+- 분봉 데이터 계산
+- 매수/매도 로직 계산
+- 매수/매도 주문
+
+장애처리
+- 장 중에 재기동시 복구 절차
+
+등등
