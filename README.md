@@ -15,13 +15,3 @@ Artificial Intelligence Financial Trading 2022
 
 참고
 - pykiwoom: (https://github.com/sharebook-kr/pykiwoom) 의 기능을 활용
-
-## 실시간 구동
-### 장시작전 준비
-
-### 장중 실시간 데이터 수집
-
-
-## 주문 및 모니터링
-
-## 매수/매도 의사결정 로직
