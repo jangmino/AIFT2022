@@ -1,0 +1,18 @@
+<config>
+  <DBMS>
+    <mysql>
+      <host>localhost</host>
+      <user>root</user>
+      <password>root</password>
+      <database>dbname</database>
+    </mysql>
+    <sqlite>
+      <database>dbname.sqlite3</database>
+    </sqlite>
+  </DBMS>
+  <Login>
+    <id>아이디</id>
+    <password>비밀번호</password>
+    <cert_password>공인인증서비밀번호</cert_password>
+  </Login>
+</config>
