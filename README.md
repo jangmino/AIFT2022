@@ -24,7 +24,7 @@ Artificial Intelligence Financial Trading 2022
 - 잔고조회
 - 미체결조회
 
-메인스테이지
+메인스테이지 (브랜치: feature/real_time_mainstage)
 - 실시간 주식체결정보 구독
 - 분봉 데이터 계산
 - 매수/매도 로직 계산
