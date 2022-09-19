@@ -148,3 +148,4 @@ data/
 config/.config.xml
 
 .*.py
+.*.ipynb
