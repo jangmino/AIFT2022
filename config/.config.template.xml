@@ -1,4 +1,7 @@
 <config>
+  <PATHS>
+    <work>프레젝트로컬경로</work>
+  </PATHS>
   <DBMS>
     <mysql>
       <host>localhost</host>
