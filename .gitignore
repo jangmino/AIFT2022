@@ -149,3 +149,5 @@ config/.config.xml
 
 .*.py
 .*.ipynb
+
+db/
