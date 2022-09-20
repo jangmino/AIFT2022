@@ -61,7 +61,8 @@ class RealTimeTickDataPrivder:
   def create_table(self):
     with self.engine.connect() as connection:
       connection.execute(self.table_query)
-      connection.execute(self.index_query)
+      if self.with_index:
+        connection.execute(self.index_query)
   
   def __build_data(self, real_data):
     return (
@@ -85,4 +86,4 @@ class RealTimeTickDataPrivder:
       connection.execute(self.insert_query, self.__build_data(real_data))
 
   def insert_by_dataframe(self, real_data):
-    self.build_dataframe(real_data).to_sql('today_in_ticks', self.engine, if_exists='append', index=False)
+    self.__build_dataframe(real_data).to_sql('today_in_ticks', self.engine, if_exists='append', index=False)

@@ -69,6 +69,36 @@ class CallBackUnexecutedOrderInfo(CallBackBase):
   def apply(self, data):
     self.agent.account.set_unexecuted_order_from_tr(data)
 
+class CallBackRealTimeMarketStatus(CallBackBase):
+  """
+  실시간 '장시작시간' 콜백
+  """
+  def __init__(self, agent):
+    super().__init__("real_time_market_status", agent)
+
+  def apply(self, data):
+    self.agent.apply_real_time_market_status(data)
+
+class CallBackRealTimeStockPrice(CallBackBase):
+  """
+  실시간 '주식체결' 콜백
+  """
+  def __init__(self, name, agent):
+    super().__init__("realtime stock price (주식체결)", agent)
+
+  def apply(self, data):
+    self.agent.apply_stock_price_from_realtime(data)
+
+class CallBackRealTimeIndexPrice(CallBackBase):
+  """
+  실시간 '업종지수' 콜백
+  """
+  def __init__(self, name, agent):
+    super().__init__("realtime index price (지수체결)", agent)
+
+  def apply(self, data):
+    self.agent.apply_index_price_from_realtime(data)
+
 class Account:
   def __init__(self, acc_no, user_name, is_real):
     self.acc_no = acc_no
@@ -106,7 +136,7 @@ class Account:
       {
         '총평가금액': int(row['총평가금액']),
         '총평가손익금액': int(row['총평가손익금액']),
-        '총수익률(%)': float(row['총수익률(%)']),
+        '총수익률(%)': float(row['총수익률(%)'])/100.0,
       }
     )
 
@@ -123,7 +153,7 @@ class Account:
         '현재가': int(row_data['현재가']),
         '평가금액': int(row_data['평가금액']),
         '평가손익': int(row_data['평가손익']),
-        '수익률(%)': float(row_data['수익률(%)']),
+        '수익률(%)': float(row_data['수익률(%)'])/100.0, # 9월19일 기준 100을 곱한 값이 전달고 있음 (100으로 나눠야 함)
         '매입금액': int(row_data['매입금액']),
         '매매가능수량': int(row_data['매매가능수량']),
       }
@@ -163,17 +193,17 @@ class RTAgent:
       }
 
     self.realtime_callbacks = {
-      "장시작시간":self.CallBackRealTimeMarketStatus,
-      # "주식체결":self.CallBackRealTimeStockPrice,
-      # "업종지수":self.CallBackRealTimeIndexPrice,
+      "장시작시간":CallBackRealTimeMarketStatus(self),
+      "주식체결":CallBackRealTimeStockPrice(self),
+      "업종지수":CallBackRealTimeIndexPrice(self),
     }
 
     # RTKiwoom에 등록
     self.__rt.set_rt_agent(self)
 
-  def CallBackRealTimeMarketStatus(self, real_data):
+  def apply_real_time_market_status(self, real_data):
     """
-    실시간 시세 이벤트 처리
+    실시간 '장시작시간' 처리
     """
     status = real_data['215'].strip()
     if status == '0':
@@ -185,6 +215,18 @@ class RTAgent:
     elif status == '4':
       self.__systemstate = SystemState.AFTER_CLOSE
     # self.__systemstate = SystemState(int(real_data['장운영구분']))
+    self.get_logger().info(real_data)
+
+  def apply_real_time_stock_price(self, real_data):
+    """
+    실시간 '주식체결' 처리
+    """
+    self.get_logger().info(real_data)
+
+  def apply_real_time_index_price(self, real_data):
+    """
+    실시간 '업종지수' 처리
+    """
     self.get_logger().info(real_data)
 
   @property
