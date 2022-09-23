@@ -151,3 +151,6 @@ config/.config.xml
 .*.ipynb
 
 db/
+realtime_to_minute.csv
+today_069500_minute.csv
+today_114800_minute.csv
