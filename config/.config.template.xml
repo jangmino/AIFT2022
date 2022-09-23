@@ -10,7 +10,7 @@
       <database>dbname</database>
     </mysql>
     <sqlite>
-      <database>dbname.sqlite3</database>
+      <database>db\dbname.sqlite3</database>
     </sqlite>
   </DBMS>
   <Login>
