@@ -1,12 +1,15 @@
 from realtime_kiwoom.rt_kiwoom import *
 from realtime_kiwoom.agent import *
 from miscs.time_manager import TimeManager
+from miscs.config_manager import ConfigManager
 import sys
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    cm = ConfigManager('config/.config.xml')
     rt_kiwoom_ocx = RTKiwoom()
-    agent = RTAgent(rt_kiwoom_ocx)
+    agent = RTAgent(rt_kiwoom_ocx, config_manager=cm)
     if not agent.time_manager.is_today_open():
         agent.get_logger().warning("Today is not a open day... will be terminated.")
         sys.exit(0)

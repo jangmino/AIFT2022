@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import *
 from numbers import Real
 from realtime_kiwoom.rt_kiwoom import *
@@ -5,6 +6,7 @@ import pandas as pd
 import time
 from enum import IntEnum
 from miscs.time_manager import TimeManager
+from miscs.config_manager import ConfigManager
 from realtime_kiwoom.data_provider import *
 from PyQt5.QtCore import *
 from queue import Queue
@@ -19,9 +21,10 @@ class MarketState(IntEnum):
   AFTER_CLOSE = 4                 # 15시 30분 이후
   AFTER_CLOSE_COMPLETELY = 5      # 16시 00분 이후
 
-class AgentState(IntEnum):
+class LaunchedTimingState(IntEnum):
   LAUNCHED_BEFORE_OPEN = 0   # 장전 론칭  (정상)
   LAUNCHED_AFTER_OPEN = 1    # 장중 론칭  (비정상)
+
 
 class RecoveryState(IntEnum):
   STANBY_TO_RECOVER = 0  # 복구 대기
@@ -31,19 +34,29 @@ class RecoveryState(IntEnum):
   END_WARMUP_TR_MINUTE_DATA = 4 # 오늘 분봉 데이터 수신 완료 (01분 20초)
   RECOVERED = 5 # 복구 완료 (02분부터 정상 루프 시작)
 
+# class MarketStateCallBackManager():
+#   def __init__(self, agent: RTAgent = None):
+#     self.__agent = agent
+#     self.__after_state_entered = {
+#       MarketState.OPEN: None,
+#       MarketState.AFTER_CLOSE: None,
+#     }
+#     pass
+
 class RecoveryManager():
-  def __init__(self, agent = None):
+  def __init__(self, agent: RTAgent = None):
     self.__agent = agent
     self.state = RecoveryState.STANBY_TO_RECOVER
     self.requests_to_timer_callback = []
-    self.etf_codes = ['069500', '114800']
+    self.__today_minute_data = {}
+    self.__ts_pivot = None
 
     self.__when_state_entered = {
       RecoveryState.STANBY_TO_RECOVER: None,
       RecoveryState.START_WARMUP_RT_EXECUTION: None,
       RecoveryState.END_WARMUP_RT_EXECUTION: None,
       RecoveryState.START_WARMUP_TR_MINUTE_DATA: self.__retrieve_today_minute_data,
-      RecoveryState.END_WARMUP_TR_MINUTE_DATA: None,
+      RecoveryState.END_WARMUP_TR_MINUTE_DATA: self.__insert_today_minute_data_to_db,
       RecoveryState.RECOVERED: self.__finalize_recovery,
     }
 
@@ -96,9 +109,19 @@ class RecoveryManager():
       self.set_state(RecoveryState(self.state + 1))
 
   def __retrieve_today_minute_data(self):
-    for code in self.etf_codes:
-      df = self.__agent.get_today_etf_minute_data(code)
-      df.to_csv(f"today_{code}_minute.csv", index=False)
+    for code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
+      raw_df = self.__agent.get_today_etf_minute_data(code)
+      self.__today_minute_data[code] = raw_df
+      raw_df.to_csv(f"today_{code}_minute.csv", index=False)
+
+  def __insert_today_minute_data_to_db(self):
+    self.get_time_manager().set_ts_pivot(self.get_time_manager().get_timestamp(RecoveryState.END_WARMUP_TR_MINUTE_DATA))
+    self.__agent.get_logger().info(f"Recovery Pivot TS (floored to the minute) {self.get_time_manager().get_ts_pivot()=}")
+    for code, df in self.__today_minute_data.items():
+      self.__agent.minute_data_manager.today_minute_provider.insert_raw_dataframe_data(df, code, ts_end=self.get_time_manager().get_ts_pivot())
+    self.__agent.minute_data_manager.set_static_today_minute_data()
+    self.__agent.minute_data_manager.finalize_pre_pivot_data()
+    # self.__agent.combined_minute_data.hhmmssdic['static_minute_end'] = TimeManager.ts_to_str(self.get_time_manager().get_ts_pivot(), format="%H%M%S")
 
   def get_effective_real_minutes_str(self):
     """
@@ -114,8 +137,7 @@ class RecoveryManager():
 
   def __finalize_recovery(self):
     self.__agent.get_logger().info(f"Recover is done!!!")
-    self.pivot_YmdHM00 = self.get_time_manager().sprintf_timestamp(RecoveryState.END_WARMUP_TR_MINUTE_DATA)  
-
+    
   def __seconds_to_finalize(self, state):
     return 60 - self.__agent.time_manager.get_timestamp(RecoveryState(state)).second
 
@@ -298,17 +320,140 @@ class Account:
         '주문상태': row_data['주문상태'],
       }
 
+class AgentState(IntEnum):
+  INIT = 0 # 최초 상태
+  WAIT = 1 # 준비완료 대기중
+  BEING_RECOVERED = 2 # 복구중
+  READY = 3 # 준비완료 (정상 행동 수행 가능)
+  BEING_TERMINATED = 4 # 종료중
+  TERMINATED = 5 # 종료됨
+
+class AgentStateManager:
+  def __init__(self, agent):
+    self.__agent = agent
+    self.state = AgentState.INIT
+
+  def is_ready(self):
+    return self.state == AgentState.READY
+
+  def on_ready(self):
+    self.state = AgentState.READY
+    #TODO: 분봉데이터 최종 정리
+    self.__agent.on_ready()
+
+  def on_being_recovered(self):
+    self.state = AgentState.BEING_RECOVERED
+    pass
+
+  def on_being_terminated(self):
+    self.state = AgentState.BEING_TERMINATED
+    pass
+
+  def on_terminated(self):
+    self.state = AgentState.TERMINATED
+    pass
+
+  def step(self):
+    if self.state == AgentState.WAIT:
+      if self.__agent.market_state == MarketState.OPEN: 
+        if self.__agent.launched_state == LaunchedTimingState.LAUNCHED_BEFORE_OPEN:
+          self.state = AgentState.READY
+          self.on_ready()
+        elif self.__agent.recovery_manager.state < RecoveryState.RECOVERED:
+          self.state = AgentState.BEING_RECOVERED
+          self.on_being_recovered()
+    elif self.state == AgentState.BEING_RECOVERED:
+      if self.__agent.recovery_manager.state == RecoveryState.RECOVERED:
+        self.state = AgentState.READY
+        self.on_ready()
+    elif self.state == AgentState.READY:
+      if self.__agent.market_state == MarketState.AFTER_CLOSE:
+        self.state = AgentState.BEING_TERMINATED
+        self.on_being_terminated()
+    elif self.state == AgentState.BEING_TERMINATED:
+      if self.__agent.market_state == MarketState.AFTER_CLOSE_COMPLETELY:
+        self.state = AgentState.TERMINATED
+        self.on_terminated()
+
+class CombinedMinuteData:
+  def __init__(self, agent:RTAgent, history_minute_provider: MinuteChartDataProvider, today_minute_provider: MinuteChartDataProvider):
+    self.__agent = agent
+    self.__history_minute_provider = history_minute_provider # 어제까지 분봉데이터 (정적)
+    self.__today_minute_provider = today_minute_provider # 오늘 분봉데이터 (정적)
+    self.__static_history_minute_data = None
+    self.__static_today_minute_data = None
+    self.__pre_pivot_data = {} # 피봇 전까지 정적 데이터
+    self.__combined_data = {} # 결합데이터
+    self.__ts_last_updated = None
+    self.hhmmssdic = {
+      'static_minute_end': '090000', # 정적 분봉데이터 마지막 시간 (미만)
+      'real_minute_start': '090000', # 실시간 분봉 시작 (이상)
+      'real_minute_end': '153000', # 실시간 분봉 종료 (미만)
+    }
+
+  @property
+  def get_ts_last_updated(self):
+    return self.__ts_last_updated
+
+  @property
+  def today_minute_provider(self):
+    return self.__today_minute_provider
+
+  def get_combined_data(self, code):
+    return self.__combined_data[code]
+
+  def __get_last_inserted_ts(self):
+    return max([v.index[-1] for k, v in self.__pre_pivot_data.items()])
+      
+  def set_static_history_minute_data(self):
+    # TODO: 기간 하드 코딩 수정 필요
+    self.__static_history_minute_data = self.__history_minute_provider.get_history_from_ndays_ago()
+
+  def set_static_today_minute_data(self):
+    # 수집한 분봉 데이터중 오늘 것만 로딩
+    self.__static_today_minute_data = self.__today_minute_provider.get_history_from_ndays_ago(n_days=0)
+
+  def finalize_pre_pivot_data(self):
+    '''
+    히스토리와 정적으로 수집한 오늘 분봉 결합 -> 최종 정적 데이터
+    '''
+    if self.__static_history_minute_data is None:
+      return
+    for st_code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
+      if not self.__static_today_minute_data or st_code not in self.__static_today_minute_data:
+        self.__pre_pivot_data[st_code] = self.__static_history_minute_data[st_code]
+      else:
+        self.__pre_pivot_data[st_code] = pd.concat((self.__static_history_minute_data[st_code], self.__static_today_minute_data[st_code]), axis=0)
+    for st_code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
+      self.__agent.get_logger().info(f'PIVOT 이전 데이터 (실시간 반영 전 정적 데이터): {len(self.__pre_pivot_data[st_code])} / {self.__pre_pivot_data[st_code].index[-1]}')
+
+  def update_minute_data_realtime(self, real_data:pd.DataFrame):
+    if self.__pre_pivot_data is None:
+      return
+    real_data['dt'] = pd.to_datetime(real_data['dt']).dt.tz_localize('Asia/Seoul')
+    for st_code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
+      real_df = real_data.query(f"st_code == '{st_code}'").set_index('dt')
+      if len(real_df) > 0:
+        self.__combined_data[st_code] = pd.concat((self.__pre_pivot_data[st_code], real_df), axis=0)
+        self.__agent.get_logger().info(f'분봉데이터 실시간 업데이트 완료: {len(self.__pre_pivot_data[st_code])} / {self.__pre_pivot_data[st_code].index[-1]} / {real_df.index[-1]}')
+  
 class RTAgent:
-  def __init__(self, kiwoom_backend_ocx:RTKiwoom = None, log_config_path=None, log_path=None):
+  def __init__(self, kiwoom_backend_ocx:RTKiwoom = None, config_manager:ConfigManager = None, log_config_path=None, log_path=None):
     self.__rt = kiwoom_backend_ocx
     self.__login_info = {}
     self.__account = {}
     self.__timer = None
-    self.__rt_data_provider = RealTimeTickDataPrivder()
+    self.__config_manager = config_manager
+    self.__rt_data_provider = RealTimeTickDataPrivder.Factory(config_manager)
     self.__time_manager = TimeManager(fast_debug=True)
     self.__market_state = MarketState.NOT_OPERATIONAL
-    self.__agent_state = AgentState.LAUNCHED_BEFORE_OPEN
+    self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
     self.__recovery_manager = None
+    self.minute_data_manager = CombinedMinuteData(
+      self,
+      history_minute_provider=MinuteChartDataProvider.Factory(config_manager, tag='history'),
+      today_minute_provider=MinuteChartDataProvider.Factory(config_manager, tag='today')
+      )
     
     self.callbacks = {
       # "Connect":CallBackConnect(self),
@@ -322,6 +467,8 @@ class RTAgent:
       "장시작시간":CallBackRealTimeMarketStatus(self),
       "주식체결":CallBackRealTimeStockPrice(self),
       "업종지수":CallBackRealTimeIndexPrice(self),
+      ###########
+
     }
 
     if kiwoom_backend_ocx is None:
@@ -340,6 +487,8 @@ class RTAgent:
       self.__market_state = MarketState.BEFORE_OPEN
     elif status == '3':
       self.__market_state = MarketState.OPEN
+      self.__time_manager.set_ts_pivot(TimeManager.get_now() + pd.Timedelta(seconds=10))
+      self.minute_data_manager.finalize_pre_pivot_data()
     elif status == '2':
       self.__market_state = MarketState.AFTER_SIMULTANEOUS_QUOTE 
     elif status == '4':
@@ -369,6 +518,10 @@ class RTAgent:
     return self.__login_info
 
   @property
+  def config_manager(self):
+    return self.__config_manager
+
+  @property
   def account(self):
     return self.__account
 
@@ -379,6 +532,18 @@ class RTAgent:
   @property
   def rt_data_provider(self):
     return self.__rt_data_provider
+
+  @property
+  def market_state(self):
+    return self.__market_state
+  
+  @property
+  def launched_state(self):
+    return self.__launched_state
+
+  @property
+  def recovery_manager(self):
+    return self.__recovery_manager
 
   def get_logger(self):
     if self.__rt is not None:
@@ -423,19 +588,38 @@ class RTAgent:
   # 타이머 콜백 함수 (1초마다 호출)
   def __timer_callback(self):
     # self.get_logger().info(f"timer callback")
+
+    # 복구 매니저가 필요하면 이에 대한 디스패치 수행
     if self.__recovery_manager:
       self.__recovery_manager.dispatch_request()
-    
-    if self.__time_manager.get_now().second == 0:
-      df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
-      self.get_logger().info(f"{df.iloc[0]['cnt']} real tick rows are inserted.")
-      df2 = self.__rt_data_provider.make_minute_chart_df()
-      df2.to_csv('realtime_to_minute.csv', index=False)
-      self.get_logger().info(df2)
 
+    normal_state = (
+      (self.__recovery_manager and self.__recovery_manager.state == RecoveryState.RECOVERED) or 
+      (self.__launched_state == LaunchedTimingState.LAUNCHED_BEFORE_OPEN and self.__market_state == MarketState.OPEN)
+    )
+    
+    # 정상의 경우
+    if normal_state:
+      # 매 분마다 처리할 내용들
+      if self.__time_manager.get_now().second == 0 and self.__time_manager.get_ts_pivot():
+        ts_from = self.__time_manager.get_ts_pivot()
+        ts_end = TimeManager.ts_floor_time(TimeManager.get_now())
+        df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
+        self.get_logger().info(f"{df.iloc[0]['cnt']} real tick rows are inserted.")
+        if ts_end - ts_from >= pd.Timedelta(1, unimt='m'):
+          self.get_logger().info(f"[실시간 분봉 계산 범위: {ts_from}, {ts_end})")
+          from_pivot_df = self.__rt_data_provider.make_minute_chart_df(ts_from, ts_end)
+          self.minute_data_manager.update_minute_data_realtime(from_pivot_df)
+          self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
+          self.get_logger().info(from_pivot_df)
+        self.__rt_data_provider.retrieve_all().to_csv('realtime_ticks.csv', index=False)
+      
 
   ## 콜백 함수들
   ## TODO: 필요한 콜백만 추가
+  def on_ready(self):
+    self.get_logger().info("on_ready")
+    self.__recovery_manager.get_effective_real_minutes_str()
 
   def PreStage(self):
     # 로그인 (연결)
@@ -495,16 +679,22 @@ class RTAgent:
       dfs.append(df)
 
     df = pd.concat(dfs)
-    self.callbacks['UnexecutedOrderInfo'].apply(df) 
+    self.callbacks['UnexecutedOrderInfo'].apply(df)
+
+    # 어제까지 분봉 데이터 로딩
+    self.minute_data_manager.set_static_history_minute_data()
 
   def MainStage(self):
     self.__time_manager.set_timestamp('MainStageEntered')
     self.launch_timer()
-    if self.__time_manager.get_timestamp('MainStageEntered') > self.__time_manager.when_to_open():
-        self.get_logger().warning('Recovery needed...')
-        # TODO: agent.__market_state -> MarketState.OPEN 으로 변경해야 함.
-        self.__agent_state = AgentState.LAUNCHED_AFTER_OPEN
-        self.__recovery_manager = RecoveryManager(self)
+    if False and self.__time_manager.get_timestamp('MainStageEntered') > self.__time_manager.when_to_open():
+      self.get_logger().warning(f"Recovery needed...{self.__time_manager.get_timestamp('MainStageEntered')} / {self.__time_manager.when_to_open()}")
+      self.__market_state = MarketState.OPEN
+      self.__launched_state = LaunchedTimingState.LAUNCHED_AFTER_OPEN
+      self.__recovery_manager = RecoveryManager(self)
+    else:
+      self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
+      self.apply_real_time_market_status({'215':'3'})
 
     # 장시작시간 수신
     rtRequest = RealtimeRequestItem("2000", [], ["215", "20", "214"], "0")

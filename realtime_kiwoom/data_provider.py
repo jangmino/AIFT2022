@@ -1,6 +1,11 @@
+from __future__ import annotations
 # from abc import *
+from sqlite3 import Time
 import pandas as pd
+import os
 from sqlalchemy import create_engine
+from miscs.config_manager import ConfigManager
+from miscs.time_manager import TimeManager
 
 class QueryBaseStrings:
   table_create_query = '''
@@ -33,7 +38,8 @@ class QueryBaseStrings:
 
 class DataProviderBase():
 
-  def __init__(self, db_path, table_name, index_name=None, drop_table=False):
+  def __init__(self, config_manager:ConfigManager, db_path, table_name, index_name=None, drop_table=False):
+    self.config_manager = config_manager
     self.db_name = db_path
     self.table_name = table_name
     self.index_name = index_name
@@ -77,41 +83,75 @@ class DataProviderBase():
 
 
 class MinuteChartDataProvider(DataProviderBase):
-  def __init__(self, db_path, table_name, drop_table=True):
-    super().__init__(db_path, table_name, index_name=f'idx_{table_name}', drop_table=drop_table)
 
-  def filter_from_raw_data(self, raw_df, code):
+  @staticmethod
+  def Factory(config_manager: ConfigManager, tag='history'):
+    """
+    Factory method: MinuteChartDataProvider 객체 생성
+    """
+    table_info = config_manager.get_tables()
+    return MinuteChartDataProvider(
+      config_manager,
+      db_path=os.path.join(config_manager.get_work_path(), config_manager.get_database()['database']), 
+      table_name=table_info[tag]['table_name'], 
+      drop_table=table_info[tag]['drop_table']
+    )
+
+  def __init__(self, config_manager, db_path, table_name, drop_table=True):
+    super().__init__(config_manager, db_path, table_name, index_name=f'idx_{table_name}', drop_table=drop_table)
+
+  def filter_from_raw_data(self, raw_df, code, ts_from:pd.Timestamp=None, ts_end:pd.Timestamp=None):
+    """
+    [ts_from, ts_end)
+    to_datetime() 사용시, format을 지정해주지 않으면 각 엘리먼트마다 포맷 추론을 시도하므로,
+    속도가 매우 느려진다. (십만건 기준: 0.3ms vs 5s)
+    """
     cols = ['현재가','거래량','체결시간','시가','고가','저가']
     df_ = raw_df[cols]
     df = pd.concat((
     df_['체결시간'],
-    df_['시가'].abs(),
-    df_['고가'].abs(),
-    df_['저가'].abs(),
-    df_['현재가'].abs(),
-    df_['거래량'].abs(),
+    df_['시가'].astype('int').abs(),
+    df_['고가'].astype('int').abs(),
+    df_['저가'].astype('int').abs(),
+    df_['현재가'].astype('int').abs(),
+    df_['거래량'].astype('int').abs(),
     ), axis=1)
     df.columns=['dt','open','high','low','close', 'volume']
     df['st_code'] = code
-    return df
 
-  def insert_by_dataframe(self, raw_df, code):
-    if len(raw_df) != 0:
-      self.filter_from_raw_data(raw_df, code).to_sql(self.table_name, self.engine, if_exists='append', index=False)
+    dt_series = pd.to_datetime(df['dt'], format='%Y%m%d%H%M%S').dt.tz_localize('Asia/Seoul')
+    ii = (dt_series >= ts_from) if ts_end is None else (dt_series > ts_from) & (dt_series < ts_end)
+    return df[ii]
 
-  def safe_bulk_insert_from_csv(self, csv_path, code):
-    '''
-    벌크 인서트: 매일 1회 실행한다고 가정
-    '''
-    df = pd.read_csv(csv_path, dtype={'체결시간':str})
-    df.rename(columns={'체결시간':'dt'}, inplace=True)
+  def get_ts_last_inserted(self, code):
+    """
+    마지막으로 입력된 시간을 반환
+    """
     last_dt = self.query(f"SELECT dt FROM {self.table_name} WHERE st_code='{code}' ORDER BY dt DESC LIMIT 1")
+    return TimeManager.str_to_ts(last_dt['dt'].values[0] if len(last_dt) != 0 else '19700101000000')
 
-    self.insert_by_dataframe(
-      df.query(f'dt > "{last_dt["dt"][0]}"') if len(last_dt) > 0 else df
-      , code
-    )  
+  def insert_raw_dataframe_data(self, raw_df:pd.DatFame, code:str, ts_end:pd.Timestamp=None):
+    """
+    [ts_after_last_inserted, ts_end): 날 것의 데이터프레임 데이터를 삽입
+    """
+    num_inserted = 0
+    if len(raw_df) != 0:
+      ts_after_last_inserted=TimeManager.ts_min_shift(self.get_ts_last_inserted(code), minutes=1, floor=True)
+      num_inserted = self.filter_from_raw_data(raw_df, code, ts_from=ts_after_last_inserted, ts_end=ts_end).to_sql(self.table_name, self.engine, if_exists='append', index=False)
+    return num_inserted
 
+  def get_history_from_ndays_ago(self, n_days=14):
+    '''
+    과거 n일치 데이터를 가져온다.
+    '''
+    from_ts = TimeManager.ts_day_shift(TimeManager.get_now(), days=-n_days, floor=True)
+    df = self.query(f'''
+    SELECT * FROM {self.table_name} 
+    WHERE dt >= '{TimeManager.ts_to_str(from_ts)}'
+    ORDER BY st_code ASC, dt ASC
+    ''')
+    df['dt'] = pd.to_datetime(df['dt']).dt.tz_localize('Asia/Seoul')
+    return {st_code: df.query(f"st_code=='{st_code}'").set_index('dt') for st_code in map(lambda x: x[0], self.config_manager.get_candidate_ETFs())}
 
 class RealTimeTickDataPrivder(DataProviderBase):
   make_minute_chart_query = '''
@@ -122,13 +162,21 @@ class RealTimeTickDataPrivder(DataProviderBase):
   last_value(t.close) over (partition by t.st_code, t.minute order by t.dt ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as close,
   sum(t.volume) over (partition by t.st_code, t.minute order by t.dt ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as volume
   from (
-    select *, substr(dt, 0, 5) as minute from today_in_ticks substr
+    select *, substr(dt, 0, 5) as minute
+    from today_in_ticks
+    where dt >= '{FROM_HHMMSS}' and dt < '{END_HHMMSS}'
     ) as t
-  '''  
+  '''
 
-  def __init__(self):
-      super().__init__(':memory:', table_name='today_in_ticks', index_name='idx_today_in_ticks', drop_table=True)
-      self.make_minute_chart_query = RealTimeTickDataPrivder.make_minute_chart_query.format(YYYYMMDD=self.today.strftime('%Y%m%d'))
+  @staticmethod
+  def Factory(config_manager: ConfigManager):
+    """
+    Factory method: RealTimeTickDataPrivder 객체 생성
+    """
+    return RealTimeTickDataPrivder(config_manager)
+
+  def __init__(self, coonfig_manager:ConfigManager):
+      super().__init__(coonfig_manager, ':memory:', table_name='today_in_ticks', index_name='idx_today_in_ticks', drop_table=True)
 
   def __build_data(self, real_data):
     return (
@@ -152,22 +200,31 @@ class RealTimeTickDataPrivder(DataProviderBase):
       connection.execute(self.insert_query, self.__build_data(real_data))
 
   def insert_by_dataframe(self, real_data):
-    self.__build_dataframe(real_data).to_sql('today_in_ticks', self.engine, if_exists='append', index=False)
+    self.__build_dataframe(real_data).to_sql(self.table_name, self.engine, if_exists='append', index=False)
 
   def recent_inserted_ts(self):
-    query_string = '''
-    SELECT dt FROM today_in_ticks ORDER BY dt DESC LIMIT 1
+    # 실시간 체결이라서 HHMMSS 형식이다.
+    query_string = f'''
+    SELECT dt FROM {self.table_name} ORDER BY dt DESC LIMIT 1
     '''
     with self.engine.connect() as connection:
-      ts_str = connection.execute(query_string).fetchall()[0][0]
-    return pd.to_datetime(ts_str, format='%H%M%S').replace(year=self.today.year, month=self.today.month, day=self.today.day).tz_localize('Asia/Seoul')
+      hhmmss = connection.execute(query_string).fetchall()[0][0]
+    return TimeManager.hhmmss_to_ts(hhmmss)
 
-  def make_minute_chart_df(self):
-    return self.query(self.make_minute_chart_query)
+  def make_minute_chart_df(self, ts_from:pd.Timestamp=None, ts_end:pd.Timestamp=None):
+    """
+    [ts_from, ts_end)
+    """
+    query_string = RealTimeTickDataPrivder.make_minute_chart_query.format(
+      YYYYMMDD=TimeManager.ts_to_str(TimeManager.get_now(), '%Y%m%d'), 
+      FROM_HHMMSS=TimeManager.ts_to_str(TimeManager.ts_floor_time(ts_from, freq='T'), '%H%M00') if ts_from is not None else '090000',
+      END_HHMMSS=TimeManager.ts_to_str(TimeManager.ts_floor_time(ts_end, freq='T'), '%H%M00') if ts_end is not None else '153001'
+      )
+    return self.query(query_string=query_string)
+
+  def retrieve_all(self):
+    return self.query(f'SELECT * FROM {self.table_name}')
+
 
   if __name__ == '__main__':
-    minute_data_provider1 = MinuteChartDataProvider(db_path="../data/kiwoom_db.sqlite3", table_name='data_in_minute', drop_table=True)
-    minute_data_provider2 = MinuteChartDataProvider(db_path="../data/kiwoom_db.sqlite3", table_name='today_in_minute', drop_table=True)
-    print(minute_data_provider1.query(f'select count(*) cnt from {minute_data_provider1.table_name}'))
-    print(minute_data_provider2.query(f'select count(*) cnt from {minute_data_provider2.table_name}'))
     pass
