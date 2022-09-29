@@ -154,3 +154,7 @@ db/
 realtime_to_minute.csv
 today_069500_minute.csv
 today_114800_minute.csv
+probe_realtime_minute.csv
+realtime_ticks_20220926_오전.csv
+realtime_ticks.csv
+TA_Lib-0.4.24-cp38-cp38-win32.whl
