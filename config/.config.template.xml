@@ -1,4 +1,7 @@
 <config>
+  <PATHS>
+    <work>프레젝트로컬경로</work>
+  </PATHS>
   <DBMS>
     <mysql>
       <host>localhost</host>
@@ -7,7 +10,7 @@
       <database>dbname</database>
     </mysql>
     <sqlite>
-      <database>dbname.sqlite3</database>
+      <database>db\dbname.sqlite3</database>
     </sqlite>
   </DBMS>
   <Login>

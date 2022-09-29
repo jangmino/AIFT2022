@@ -195,18 +195,24 @@ class RTKiwoom:
           val = self.__get_com_real_data(sCode, fid)
           real_data[fid] = val
           self.real_code_data[sCode].append(real_data)
-        self.__rt_agent.CallBackRealTimeMarketStatus(real_data)
+        self.__rt_agent.realtime_callbacks["장시작시간"].apply(real_data)
     elif sRealType == '주식체결':
       if sCode in self.real_code_fid_dict:
         for fid in self.real_code_fid_dict[sCode]:
           val = self.__get_com_real_data(sCode, fid)
           real_data[fid] = val
           self.real_code_data[sCode].append(real_data)
+        self.__rt_agent.realtime_callbacks["주식체결"].apply(real_data)
     elif sRealType == '업종지수':
-      real_data['data'] = sRealData
+      if sCode in self.real_code_fid_dict:
+        for fid in self.real_code_fid_dict[sCode]:
+          val = self.__get_com_real_data(sCode, fid)
+          real_data[fid] = val
+          self.real_code_data[sCode].append(real_data)
+        self.__rt_agent.realtime_callbacks["업종지수"].apply(real_data)
     else:
       return
-    self.get_logger().debug(real_data)
+    # self.get_logger().debug(real_data)
 
   def __get_com_real_data(self, sCode, fid):
     '''
