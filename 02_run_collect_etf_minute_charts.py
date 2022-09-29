@@ -3,10 +3,10 @@ import time
 import pandas as pd
 import pickle
 from tqdm.auto import tqdm
-import xml.etree.ElementTree as elemTree
 from realtime_kiwoom.data_provider import *
 import os
 import argparse
+from miscs.config_manager import ConfigManager
 
 '''
  몇가지 ETF 종목과 업종 
@@ -58,18 +58,15 @@ if __name__ == "__main__":
   parser.add_argument("-n", "--daysago", type=int, help="number of days ago", default=0)
   args = parser.parse_args()
 
-  tree = elemTree.parse(r'config/.config.xml')
-  root = tree.getroot()
-  node_sqlite3 = root.find('./DBMS/sqlite3')
-  config_db = {tag:node_sqlite3.find(tag).text for tag in ['database']}
-  work_path = root.find('./PATHS').find('work').text
+  cm = ConfigManager('config/.config.xml')
+  table_info = cm.get_tables()
 
   if args.daily:
     ts = pd.Timestamp.now(tz='Asia/Seoul') - pd.Timedelta(days=args.daysago)
     day_str = ts.strftime('%Y%m%d')
     from_dt_str = ts.strftime("%Y%m%d090000")
 
-  minute_data_provider1 = MinuteChartDataProvider(db_path=config_db['database'], table_name='data_in_minute', drop_table=False)
+  minute_data_provider1 = MinuteChartDataProvider.Factory(cm, tag='history')
 
   kiwoom = RTKiwoom()
   
@@ -88,5 +85,6 @@ if __name__ == "__main__":
         df = df[df['체결시간'] >= from_dt_str]
         name = f'{name}_{day_str}'
       df.to_csv(f'data/{name}.csv', index=False)
-      minute_data_provider1.safe_bulk_insert_from_csv(f'data/{name}.csv', code)
+      minute_data_provider1.insert_raw_dataframe_data(df, code)
+      # minute_data_provider1.safe_bulk_insert_from_csv(f'data/{name}.csv', code)
       kiwoom.get_logger().info(f'{name} saved (or stored)')
