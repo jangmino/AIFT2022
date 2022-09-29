@@ -33,4 +33,8 @@ Artificial Intelligence Financial Trading 2022
 장애처리
 - 장 중에 재기동시 복구 절차
 
+기술적 지표/백테스팅 (브랜치: feature/techinal_indicators)
+- Technical indicators
+- Backtesting
+- 
 등등
