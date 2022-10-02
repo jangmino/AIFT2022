@@ -7,6 +7,7 @@ from realtime_kiwoom.data_provider import *
 import os
 import argparse
 from miscs.config_manager import ConfigManager
+from miscs.time_manager import TimeManager
 
 '''
  몇가지 ETF 종목과 업종 
@@ -62,11 +63,11 @@ if __name__ == "__main__":
   table_info = cm.get_tables()
 
   if args.daily:
-    ts = pd.Timestamp.now(tz='Asia/Seoul') - pd.Timedelta(days=args.daysago)
-    day_str = ts.strftime('%Y%m%d')
-    from_dt_str = ts.strftime("%Y%m%d090000")
+    ts = TimeManager.ts_day_shift(TimeManager.get_now(), days=-args.daysago, floor=True)
+    day_str = TimeManager.ts_to_str(ts, format="%Y%m%d")
+    from_dt_str = TimeManager.ts_to_str(ts, format="%Y%m%d090000")
 
-  minute_data_provider1 = MinuteChartDataProvider.Factory(cm, tag='history')
+  minute_data_provider = MinuteChartDataProvider.Factory(cm, tag='history')
 
   kiwoom = RTKiwoom()
   
@@ -85,6 +86,5 @@ if __name__ == "__main__":
         df = df[df['체결시간'] >= from_dt_str]
         name = f'{name}_{day_str}'
       df.to_csv(f'data/{name}.csv', index=False)
-      minute_data_provider1.insert_raw_dataframe_data(df, code)
-      # minute_data_provider1.safe_bulk_insert_from_csv(f'data/{name}.csv', code)
-      kiwoom.get_logger().info(f'{name} saved (or stored)')
+      num_inserted = minute_data_provider.insert_raw_dataframe_data(df, code)
+      kiwoom.get_logger().info(f'{name} saved (or updated) with #{num_inserted} rows')
