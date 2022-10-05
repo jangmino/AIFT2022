@@ -36,4 +36,9 @@ Artificial Intelligence Financial Trading 2022
 예측서버 (브랜치: feature/pred_server_grpc)
 - gRPC 서버-클라이언트 구현
 
+기술적 지표/백테스팅 (브랜치: feature/techinal_indicators)
+- Technical indicators
+- Backtesting
+
+
 등등
