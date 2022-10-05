@@ -149,6 +149,7 @@ config/.config.xml
 
 .*.py
 .*.ipynb
+.*.pkl
 
 db/
 realtime_to_minute.csv
