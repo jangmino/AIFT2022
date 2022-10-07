@@ -18,13 +18,13 @@ Artificial Intelligence Financial Trading 2022
 
 ## 실시간 시스템
 
-프리스테이지 (브랜치: feature/real_time_prestage)
+### 프리스테이지 (브랜치: feature/real_time_prestage)
 - 로그인
 - 계좌조회
 - 잔고조회
 - 미체결조회
 
-메인스테이지 (브랜치: feature/real_time_mainstage)
+### 메인스테이지 (브랜치: feature/real_time_mainstage)
 - 실시간 주식체결정보 구독
 - 분봉 데이터 계산
 - 매수/매도 로직 계산
@@ -33,12 +33,17 @@ Artificial Intelligence Financial Trading 2022
 장애처리
 - 장 중에 재기동시 복구 절차
 
-예측서버 (브랜치: feature/pred_server_grpc)
+## 예측서버 (브랜치: feature/pred_server_grpc)
 - gRPC 서버-클라이언트 구현
 
-기술적 지표/백테스팅 (브랜치: feature/techinal_indicators)
+## 기술적 지표/백테스팅 (브랜치: feature/techinal_indicators)
 - Technical indicators
 - Backtesting
+- 추가 패키지
+    - ta-lib
+    - exchange-calendars
+    - tqdm
+    - flaml
 
 
 등등
