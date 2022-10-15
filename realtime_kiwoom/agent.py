@@ -11,6 +11,8 @@ from realtime_kiwoom.data_provider import *
 from PyQt5.QtCore import *
 from queue import Queue
 from config.log_class import *
+from realtime_kiwoom.kiwoom_type import *
+from realtime_kiwoom.action import ActionManager
 
 
 class MarketState(IntEnum):
@@ -241,6 +243,26 @@ class CallBackRealTimeIndexPrice(CallBackBase):
   def apply(self, data):
     self.agent.apply_real_time_index_price(data)
 
+class CallBackChejanExecution(CallBackBase):
+  """
+  실시간 체잔 '주문체결' 콜백
+  """
+  def __init__(self, agent):
+    super().__init__("chejan excecution (체잔: 주문체결)", agent)
+
+  def apply(self, data):
+    self.agent.apply_chejan_execution(data)
+
+class CallBackChejanAccountBalance(CallBackBase):
+  """
+  실시간 체잔 '잔고' 콜백
+  """
+  def __init__(self, agent):
+    super().__init__("chejan account bank balance (체잔: 잔고)", agent)
+
+  def apply(self, data):
+    self.agent.apply_chejan_account_balance(data)
+
 class Account:
   def __init__(self, acc_no, user_name, is_real):
     self.acc_no = acc_no
@@ -261,6 +283,10 @@ class Account:
   @property
   def d2deposit(self):
     return self.__d2deposit
+
+  @property
+  def individual_asset_dict(self):
+    return self.__individual_asset_dict
 
   @d2deposit.setter
   def d2deposit(self, value):
@@ -287,7 +313,7 @@ class Account:
     종목별평가결과 반영
     """
     for i, row_data in data.iterrows():
-      item_code = row_data['종목번호']
+      item_code = row_data['종목번호'][1:]
       self.__individual_asset_dict[item_code] = {
         '종목명': row_data['종목명'],
         '보유수량': int(row_data['보유수량']),
@@ -307,7 +333,7 @@ class Account:
     for i, row_data in data.iterrows():
       order_no = row_data['주문번호']
       self.__unexecuted_order_dict[order_no] = {
-        '종목코드': row_data['종목코드'],
+        '종목코드': row_data['종목코드'][1:],
         '주문번호': order_no,
         '종목명': row_data['종목명'],
         '주문수량': int(row_data['주문수량']),
@@ -319,6 +345,23 @@ class Account:
         '매매구분': row_data['매매구분'],
         '주문상태': row_data['주문상태'],
       }
+
+  def update_unexecuted_order_and_check_if_completed(self, data):
+    """
+    미체결수량이 0이 되면 미체결 주문에서 제거 및 True 반환
+    """
+    if data['주문번호'] in self.__unexecuted_order_dict:
+      self.__unexecuted_order_dict[data['주문번호']].update(data)
+    else:
+      self.__unexecuted_order_dict[data['주문번호']]=data
+
+    if data['미체결수량'] == 0:
+      del self.__unexecuted_order_dict[data['주문번호']]
+      return True
+
+    return False
+  # get 함수들
+
 
 class AgentState(IntEnum):
   INIT = 0 # 최초 상태
@@ -449,6 +492,7 @@ class RTAgent:
     self.__market_state = MarketState.NOT_OPERATIONAL
     self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
     self.__recovery_manager = None
+    self.__action_manager = None
     self.minute_data_manager = CombinedMinuteData(
       self,
       history_minute_provider=MinuteChartDataProvider.Factory(config_manager, tag='history'),
@@ -467,6 +511,8 @@ class RTAgent:
       "장시작시간":CallBackRealTimeMarketStatus(self),
       "주식체결":CallBackRealTimeStockPrice(self),
       "업종지수":CallBackRealTimeIndexPrice(self),
+      "체잔:주문체결":CallBackChejanExecution(self),
+      "체잔:잔고":CallBackChejanAccountBalance(self),
       ###########
 
     }
@@ -477,6 +523,9 @@ class RTAgent:
     # RTKiwoom에 등록
     if self.__rt is not None:
       self.__rt.set_rt_agent(self)
+
+    # TODO: 테스트 후 지울 것
+    self.__test_is_done = False
 
   def apply_real_time_market_status(self, real_data):
     """
@@ -512,6 +561,30 @@ class RTAgent:
     실시간 '업종지수' 처리
     """
     self.get_logger().info(real_data)
+
+  def apply_chejan_execution(self, real_data):
+    # self.get_logger().info(real_data)
+
+    field_dic = RealType.REALTYPE['주문체결']
+    transform_dic = RealType.PostProcessing['주문체결']
+
+    items = {tag:transform_dic[tag](real_data[fid]) for tag, fid in field_dic.items() if fid in real_data}
+    self.get_logger().info(items)
+    if self.__account.update_unexecuted_order_and_check_if_completed(items):
+      if self.__action_manager:
+        self.__action_manager.update_execution_completion_info(items)
+      self.get_logger().info(f"주문체결 완료: 종목코드={items['종목코드']} 주문번호={items['주문번호']}")
+    return items
+
+  def apply_chejan_account_balance(self, real_data):
+    # self.get_logger().info(real_data)
+
+    field_dic = RealType.REALTYPE['잔고']
+    transform_dic = RealType.PostProcessing['잔고']
+
+    items = {tag:transform_dic[tag](real_data[fid]) for tag, fid in field_dic.items() if fid in real_data}
+    self.get_logger().info(items)
+    return items
 
   @property
   def login_info(self):
@@ -579,6 +652,74 @@ class RTAgent:
     df = self.__rt.block_TR_request("opt10080", **dic)
     return df
 
+  def try_to_sell(self, code, asset_info):
+    """
+    시장가 매도
+    TODO: 스크린번호 처리
+    """
+
+    ret_code = self.__rt.SendOrder("시장가매도", "0301", self.__account.acc_no, 2, code, asset_info["매매가능수량"], 0, "03", "")
+    self.get_logger().info(f"매도주문: {code} {asset_info['종목명']} quantity={asset_info['매매가능수량']} => f{self.__rt.kiwoom_errors[ret_code]=}")
+
+  def try_to_buy(self, code, quantity=1):
+    """
+    시장가 매수
+    TODO: 스크린번호 처리
+    """
+
+    ret_code = self.__rt.SendOrder("시장가매수", "0301", self.__account.acc_no, 1, code, quantity, 0, "03", "")
+    self.get_logger().info(f"매수주문: {code} {quantity=} => f{self.__rt.kiwoom_errors[ret_code]=}")
+
+  def __test_buy_and_sell(self):
+    """
+    매수-매도 테스트
+    """
+    # num_sell_orders = 0
+    # for code, asset_info in self.__account.individual_asset_dict.items():
+    #   self.try_to_sell(code, asset_info)
+    #   num_sell_orders += 1
+    #   break
+
+    # if num_sell_orders == 0:
+    #   self.try_to_buy("114800", 1)
+
+    self.__action_manager = ActionManager(self, 'X')
+    self.__test_is_done = True
+  
+  def update_account_info(self):
+    # 주기적으로 호출받게 됨
+     # 예수금상세현황요청
+    dic = {"계좌번호":self.login_info['account_nos'][0], "비밀번호":"0000", "비밀번호입력매체구분":"00", "조회구분":1}
+    dic['output'] = '예수금상세현황'
+    dic['next'] = 0
+    df = self.__rt.block_TR_request("opw00001", **dic)
+    self.callbacks['DepositInfo'].apply(df)
+
+    # 계좌평가잔고내역요청
+    dic = {"계좌번호":self.login_info['account_nos'][0], "비밀번호":"0000", "비밀번호입력매체구분":"00", "조회구분":1}
+    dic['output'] = '계좌평가결과'
+    dic['next'] = 0
+    df = self.__rt.block_TR_request("opw00018", **dic)
+    self.callbacks['GrossAssetInfo'].apply(df)
+
+    dfs = []
+    dic = {"계좌번호":self.login_info['account_nos'][0], "비밀번호":"0000", "비밀번호입력매체구분":"00", "조회구분":1}
+    dic['output'] = '계좌평가잔고개별합산'
+    dic['next'] = 0
+    df = self.__rt.block_TR_request("opw00018", **dic)
+    dfs.append(df)
+
+    while self.__rt.tr_remained:
+      dic['next'] = 2
+      time.sleep(1)
+      df = self.__rt.block_TR_request("opw00018", **dic)
+      dfs.append(df)
+    
+    df = pd.concat(dfs)
+    self.callbacks['IndividualAssetInfo'].apply(df)  
+
+    self.get_logger().info(self.__account)
+
   def launch_timer(self):
     self.__timer = QTimer()
     self.__timer.setInterval(1000)
@@ -593,6 +734,10 @@ class RTAgent:
     if self.__recovery_manager:
       self.__recovery_manager.dispatch_request()
 
+    if self.__time_manager.get_now().second == 0:
+      self.update_account_info()
+      return
+
     normal_state = (
       (self.__recovery_manager and self.__recovery_manager.state == RecoveryState.RECOVERED) or 
       (self.__launched_state == LaunchedTimingState.LAUNCHED_BEFORE_OPEN and self.__market_state == MarketState.OPEN)
@@ -600,6 +745,13 @@ class RTAgent:
     
     # 정상의 경우
     if normal_state:
+      # 매초 처리할 내용들
+      if self.__action_manager:
+        self.__action_manager.step()
+        if self.__action_manager.is_completed():
+          self.get_logger().info("ActionManager completed")
+          self.__action_manager = None
+
       # 매 분마다 처리할 내용들
       if self.__time_manager.get_now().second == 0 and self.__time_manager.get_ts_pivot():
         ts_from = self.__time_manager.get_ts_pivot()
@@ -612,7 +764,15 @@ class RTAgent:
           self.minute_data_manager.update_minute_data_realtime(from_pivot_df)
           self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
           self.get_logger().info(from_pivot_df)
+          # 계좌 업데이트
+          self.update_account_info()
         self.__rt_data_provider.retrieve_all().to_csv('realtime_ticks.csv', index=False)
+      
+      # 매수-매도 테스트
+      if not self.__test_is_done:
+        self.__test_buy_and_sell()
+
+      # 계좌 업데이트
       
 
   ## 콜백 함수들
