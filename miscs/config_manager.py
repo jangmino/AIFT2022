@@ -28,7 +28,7 @@ class ConfigManager:
       }
     return dic
   
-  def get_candidate_ETFs(self):
+  def retrieve_candidate_ETFs(self):
     """
     실전에 참여할 후보 ETF 종목 코드: list
     """

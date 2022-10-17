@@ -1,13 +1,16 @@
 from __future__ import annotations
 from abc import *
-from lzma import is_check_supported
-from realtime_kiwoom import Agent
+from realtime_kiwoom.agent import *
 from miscs.config_manager import ConfigManager
 
 class ActionBase(metaclass=ABCMeta):
-  def __init__(self, agent:Agent):
+  def __init__(self, agent:RTAgent):
     self.__agent = agent
     self.submitted=False
+
+  @property
+  def agent(self) -> RTAgent:
+    return self.__agent
 
   def is_submitted(self):
     return self.submitted
@@ -36,7 +39,7 @@ class ActionBase(metaclass=ABCMeta):
   
 
 class ActionNop(ActionBase):
-  def __init__(self, agent:Agent):
+  def __init__(self, agent:RTAgent):
     super().__init__(agent)
 
   def before(self):
@@ -51,7 +54,7 @@ class ActionNop(ActionBase):
 
 class ActionBuy(ActionBase):
 
-  def __init__(self, agent:Agent, code:str):
+  def __init__(self, agent:RTAgent, code:str):
     super().__init__(agent)
     self.code = code
 
@@ -60,7 +63,10 @@ class ActionBuy(ActionBase):
 
   def submit(self, **kwargs):
     # quantity == 0 이면 전량 매수 시도 한다.
-    self.agent.try_to_buy(self.code, quantity=0)
+    self.agent.try_to_buy(
+      self.code, 
+      bid_request_info=self.agent.account.how_many_to_buy(self.code)
+      )
 
   def can_terminate(self, manager:ActionManager):
     '''체잔: 미체결수량 0이면 완료로 취급하자'''
@@ -69,7 +75,7 @@ class ActionBuy(ActionBase):
 
 class ActionSell(ActionBase):
   
-  def __init__(self, agent:Agent, code:str):
+  def __init__(self, agent:RTAgent, code:str):
     super().__init__(agent)
     self.code = code
 
@@ -78,16 +84,32 @@ class ActionSell(ActionBase):
 
   def submit(self, **kwargs):
     # quantity == 0 이면 전량 매도 시도 한다.
-    self.agent.try_to_sell(self.code, quantity=0)
+    self.agent.try_to_sell(
+      self.code, 
+      ask_request_info=self.agent.account.how_many_to_sell(self.code)
+    )
 
   def can_terminate(self, manager:ActionManager):
     '''체잔: 미체결수량 0이면 완료로 취급하자'''
     if self.code in manager.completion_info_dic and manager.completion_info_dic[self.code] == '매도':
       return True
 
+class ActionUpdateDeposit(ActionBase):
+  def __init__(self, agent:RTAgent):
+    super().__init__(agent)
+
+  def before(self):
+    self.agent.get_logger().info("ActionUpdateDeposit Before")
+
+  def submit(self, **kwargs):
+    self.agent.update_deposit()
+
+  def can_terminate(self, manager:ActionManager):
+    return True
+
 
 class ActionManager:
-  def __init__(self, agent:Agent, action_type:str):
+  def __init__(self, agent:RTAgent, action_type:str):
     self.agent = agent
     self.action_type = action_type
     self.action_list = []
@@ -105,16 +127,22 @@ class ActionManager:
     if action_type == 'NOP':
       self.action_list.append(ActionNop(self.agent))
     elif action_type == 'X':
-      if self.agent.holds(self.tag_code_dic['X']):
+      if self.agent.account.holds(self.tag_code_dic['X']):
         self.action_list.append(ActionNop(self.agent))
-      elif self.agent.holds(self.tag_code_dic['Y']):
+      elif self.agent.account.holds(self.tag_code_dic['Y']):
         self.action_list.append(ActionSell(self.agent, self.tag_code_dic['Y']))
+        self.action_list.append(ActionUpdateDeposit(self.agent))
+        self.action_list.append(ActionBuy(self.agent, self.tag_code_dic['X']))
+      else:
         self.action_list.append(ActionBuy(self.agent, self.tag_code_dic['X']))
     elif action_type == 'Y':
-      if self.agent.holds(self.tag_code_dic['Y']):
+      if self.agent.account.holds(self.tag_code_dic['Y']):
         self.action_list.append(ActionNop(self.agent))
-      elif self.agent.holds(self.tag_code_dic['X']):
+      elif self.agent.account.holds(self.tag_code_dic['X']):
         self.action_list.append(ActionSell(self.agent, self.tag_code_dic['X']))
+        self.action_list.append(ActionUpdateDeposit(self.agent))
+        self.action_list.append(ActionBuy(self.agent, self.tag_code_dic['Y']))
+      else:
         self.action_list.append(ActionBuy(self.agent, self.tag_code_dic['Y']))
     else:
       raise ValueError(f'Invalid action_type: {action_type}')

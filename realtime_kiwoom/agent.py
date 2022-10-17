@@ -111,7 +111,7 @@ class RecoveryManager():
       self.set_state(RecoveryState(self.state + 1))
 
   def __retrieve_today_minute_data(self):
-    for code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
+    for code in map(lambda x: x[0], self.__agent.config_manager.retrieve_candidate_ETFs()):
       raw_df = self.__agent.get_today_etf_minute_data(code)
       self.__today_minute_data[code] = raw_df
       raw_df.to_csv(f"today_{code}_minute.csv", index=False)
@@ -272,6 +272,7 @@ class Account:
     self.__gross_asset_dict = {}
     self.__individual_asset_dict = {}
     self.__unexecuted_order_dict = {}
+    self.__bid_ask_dict = {}
 
   def __str__(self):
     return '\n'.join([f"Account(acc_no={self.acc_no}, user_name={self.user_name}, is_real={self.is_real})",
@@ -362,6 +363,27 @@ class Account:
     return False
   # get 함수들
 
+  def holds(self, code):
+    return code in self.__individual_asset_dict
+
+  def how_many_to_sell(self, code):
+    """"매도가능수량"""
+    best_ask_price = self.__bid_ask_dict[code]['(최우선)매도호가'] # 최우선 매수호가가 곧 best_ask_price
+    return best_ask_price, self.__individual_asset_dict[code]['매매가능수량']
+
+  def how_many_to_buy(self, code):
+    """매수가능수량"""
+    best_bid_price = self.__bid_ask_dict[code]['(최우선)매도호가'] # 최우선 매도호가 가 곧 best_bid_price
+    return best_bid_price, int(self.__d2deposit / (best_bid_price * (1+0.00015))) # TODO: 수수료 하드코딩 제거할 것
+
+  def update_real_time_bid_ask_price(self, real_data):
+    field_dic = RealType.REALTYPE['주식체결']
+    transform_dic = RealType.PostProcessing['주식체결']
+
+    code = real_data['code']
+    items = {tag:transform_dic[tag](real_data[fid]) for tag, fid in field_dic.items() if fid in real_data}
+
+    self.__bid_ask_dict[code] = items
 
 class AgentState(IntEnum):
   INIT = 0 # 최초 상태
@@ -462,23 +484,23 @@ class CombinedMinuteData:
     '''
     if self.__static_history_minute_data is None:
       return
-    for st_code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
+    for st_code in map(lambda x: x[0], self.__agent.config_manager.retrieve_candidate_ETFs()):
       if not self.__static_today_minute_data or st_code not in self.__static_today_minute_data:
         self.__pre_pivot_data[st_code] = self.__static_history_minute_data[st_code]
       else:
         self.__pre_pivot_data[st_code] = pd.concat((self.__static_history_minute_data[st_code], self.__static_today_minute_data[st_code]), axis=0)
-    for st_code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
-      self.__agent.get_logger().info(f'PIVOT 이전 데이터 (실시간 반영 전 정적 데이터): {len(self.__pre_pivot_data[st_code])} / {self.__pre_pivot_data[st_code].index[-1]}')
+    for st_code in map(lambda x: x[0], self.__agent.config_manager.retrieve_candidate_ETFs()):
+      self.__agent.get_logger().info(f'PIVOT 이전 데이터 (실시간 반영 전 정적 데이터): {st_code=} {len(self.__pre_pivot_data[st_code])} / {self.__pre_pivot_data[st_code].index[-1]}')
 
   def update_minute_data_realtime(self, real_data:pd.DataFrame):
     if self.__pre_pivot_data is None:
       return
     real_data['dt'] = pd.to_datetime(real_data['dt']).dt.tz_localize('Asia/Seoul')
-    for st_code in map(lambda x: x[0], self.__agent.config_manager.get_candidate_ETFs()):
+    for st_code in map(lambda x: x[0], self.__agent.config_manager.retrieve_candidate_ETFs()):
       real_df = real_data.query(f"st_code == '{st_code}'").set_index('dt')
       if len(real_df) > 0:
         self.__combined_data[st_code] = pd.concat((self.__pre_pivot_data[st_code], real_df), axis=0)
-        self.__agent.get_logger().info(f'분봉데이터 실시간 업데이트 완료: {len(self.__pre_pivot_data[st_code])} / {self.__pre_pivot_data[st_code].index[-1]} / {real_df.index[-1]}')
+        self.__agent.get_logger().info(f'분봉데이터 실시간 업데이트 완료: {st_code=}, {len(self.__pre_pivot_data[st_code])} / {self.__pre_pivot_data[st_code].index[-1]} / {real_df.index[-1]}')
   
 class RTAgent:
   def __init__(self, kiwoom_backend_ocx:RTKiwoom = None, config_manager:ConfigManager = None, log_config_path=None, log_path=None):
@@ -536,6 +558,7 @@ class RTAgent:
       self.__market_state = MarketState.BEFORE_OPEN
     elif status == '3':
       self.__market_state = MarketState.OPEN
+      #TODO: 문제 있음
       self.__time_manager.set_ts_pivot(TimeManager.get_now() + pd.Timedelta(seconds=10))
       self.minute_data_manager.finalize_pre_pivot_data()
     elif status == '2':
@@ -551,10 +574,7 @@ class RTAgent:
     """
     # self.get_logger().info(real_data)
     self.__rt_data_provider.insert_by_dataframe(real_data)
-    # df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
-    # self.get_logger().info(f"{df.iloc[0]['cnt']} rows inserted.")
-    # if self.__recovery_manager and self.__recovery_manager.state >= RecoveryState.START_WARMUP_RT_EXECUTION:
-    #   self.__recovery_manager.apply_real_time_stock_price(real_data)
+    self.__account.update_real_time_bid_ask_price(real_data)
 
   def apply_real_time_index_price(self, real_data):
     """
@@ -652,23 +672,26 @@ class RTAgent:
     df = self.__rt.block_TR_request("opt10080", **dic)
     return df
 
-  def try_to_sell(self, code, asset_info):
+  def try_to_sell(self, code, ask_request_info):
     """
     시장가 매도
     TODO: 스크린번호 처리
     """
 
-    ret_code = self.__rt.SendOrder("시장가매도", "0301", self.__account.acc_no, 2, code, asset_info["매매가능수량"], 0, "03", "")
-    self.get_logger().info(f"매도주문: {code} {asset_info['종목명']} quantity={asset_info['매매가능수량']} => f{self.__rt.kiwoom_errors[ret_code]=}")
+    _, ask_quantity = ask_request_info
 
-  def try_to_buy(self, code, quantity=1):
+    ret_code = self.__rt.SendOrder("시장가매도", "0301", self.__account.acc_no, 2, code, ask_quantity, 0, "03", "")
+    self.get_logger().info(f"매도주문: {code} {ask_quantity=} => f{self.__rt.kiwoom_errors[ret_code]=}")
+
+  def try_to_buy(self, code, bid_request_info):
     """
-    시장가 매수
+    지정가 매수
     TODO: 스크린번호 처리
     """
+    bid_price, bid_quantity = bid_request_info
 
-    ret_code = self.__rt.SendOrder("시장가매수", "0301", self.__account.acc_no, 1, code, quantity, 0, "03", "")
-    self.get_logger().info(f"매수주문: {code} {quantity=} => f{self.__rt.kiwoom_errors[ret_code]=}")
+    ret_code = self.__rt.SendOrder("지정가매수", "0301", self.__account.acc_no, 1, code, bid_quantity, bid_price, "00", "")
+    self.get_logger().info(f"매수주문: {code} {self.account.d2deposit=}, {bid_price=}, {bid_quantity=} => f{self.__rt.kiwoom_errors[ret_code]=}")
 
   def __test_buy_and_sell(self):
     """
@@ -683,17 +706,20 @@ class RTAgent:
     # if num_sell_orders == 0:
     #   self.try_to_buy("114800", 1)
 
-    self.__action_manager = ActionManager(self, 'X')
+    self.__action_manager = ActionManager(self, 'Y')
     self.__test_is_done = True
-  
-  def update_account_info(self):
-    # 주기적으로 호출받게 됨
-     # 예수금상세현황요청
+
+  def update_deposit(self):
     dic = {"계좌번호":self.login_info['account_nos'][0], "비밀번호":"0000", "비밀번호입력매체구분":"00", "조회구분":1}
     dic['output'] = '예수금상세현황'
     dic['next'] = 0
     df = self.__rt.block_TR_request("opw00001", **dic)
     self.callbacks['DepositInfo'].apply(df)
+  
+  def update_account_info(self):
+    # 주기적으로 호출받게 됨
+     # 예수금상세현황요청
+    self.update_deposit()
 
     # 계좌평가잔고내역요청
     dic = {"계좌번호":self.login_info['account_nos'][0], "비밀번호":"0000", "비밀번호입력매체구분":"00", "조회구분":1}
@@ -730,13 +756,14 @@ class RTAgent:
   def __timer_callback(self):
     # self.get_logger().info(f"timer callback")
 
+    second = self.__time_manager.get_now().second
+
     # 복구 매니저가 필요하면 이에 대한 디스패치 수행
     if self.__recovery_manager:
       self.__recovery_manager.dispatch_request()
 
-    if self.__time_manager.get_now().second == 0:
+    if second == 0:
       self.update_account_info()
-      return
 
     normal_state = (
       (self.__recovery_manager and self.__recovery_manager.state == RecoveryState.RECOVERED) or 
@@ -753,7 +780,7 @@ class RTAgent:
           self.__action_manager = None
 
       # 매 분마다 처리할 내용들
-      if self.__time_manager.get_now().second == 0 and self.__time_manager.get_ts_pivot():
+      if second == 0 and self.__time_manager.get_ts_pivot():
         ts_from = self.__time_manager.get_ts_pivot()
         ts_end = TimeManager.ts_floor_time(TimeManager.get_now())
         df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
@@ -764,13 +791,12 @@ class RTAgent:
           self.minute_data_manager.update_minute_data_realtime(from_pivot_df)
           self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
           self.get_logger().info(from_pivot_df)
-          # 계좌 업데이트
-          self.update_account_info()
+          # # 계좌 업데이트
+          # self.update_account_info()
         self.__rt_data_provider.retrieve_all().to_csv('realtime_ticks.csv', index=False)
-      
-      # 매수-매도 테스트
-      if not self.__test_is_done:
-        self.__test_buy_and_sell()
+        # 매수-매도 테스트
+        if not self.__test_is_done:
+          self.__test_buy_and_sell()
 
       # 계좌 업데이트
       
@@ -847,21 +873,25 @@ class RTAgent:
   def MainStage(self):
     self.__time_manager.set_timestamp('MainStageEntered')
     self.launch_timer()
-    if False and self.__time_manager.get_timestamp('MainStageEntered') > self.__time_manager.when_to_open():
+
+    if False and not self.__test_is_done:
+      self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
+      self.apply_real_time_market_status({'215':'3'})
+    elif self.__time_manager.get_timestamp('MainStageEntered') > self.__time_manager.when_to_open():
       self.get_logger().warning(f"Recovery needed...{self.__time_manager.get_timestamp('MainStageEntered')} / {self.__time_manager.when_to_open()}")
       self.__market_state = MarketState.OPEN
       self.__launched_state = LaunchedTimingState.LAUNCHED_AFTER_OPEN
       self.__recovery_manager = RecoveryManager(self)
     else:
       self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
-      self.apply_real_time_market_status({'215':'3'})
+      # self.apply_real_time_market_status({'215':'3'})
 
     # 장시작시간 수신
     rtRequest = RealtimeRequestItem("2000", [], ["215", "20", "214"], "0")
     self.__rt.RegisterRealtimeRequest(rtRequest)
 
     # 관심종목 체결 수신
-    rtRequest = RealtimeRequestItem("2001", ["069500", "114800", "226490"], ["20", "16", "17", "18", "10", "15", "11", "12", "13"], "0")
+    rtRequest = RealtimeRequestItem("2001", ["069500", "114800", "226490"], ["20", "16", "17", "18", "10", "15", "11", "12", "13", "27", "28"], "0")
     self.__rt.RegisterRealtimeRequest(rtRequest)
     if self.__recovery_manager:
       self.__recovery_manager.set_state(RecoveryState.START_WARMUP_RT_EXECUTION)
