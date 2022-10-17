@@ -5,20 +5,27 @@ service Predictor {
   rpc Predict(PredictRequest) returns (PredictResponse) {}
 }
 
-message PredictRequest {
-  string st_code = 1;
-  repeated float x = 2;
+message History {
+  repeated Item items = 1;
 }
 
-enum Decision {
-  DECISION_FIRST = 0;
-  DECISION_SECOND = 1;
+message Item {
+  string dt = 1;
+  int32 open = 2;
+  int32 high = 3;
+  int32 low = 4;
+  int32 close = 5;
+  int32 volume = 6;
+}
+
+message PredictRequest {
+
+  History x_history=1;
+  History y_history=2;
 }
 
 message PredictResponse {
-  // 코드
-  string st_code = 1;
-  // FIRST: 0.7, SECOND: 0.3
-  map<int32, float> actions = 2;
+  // X: 0.7, NOP: 0.3
+  map<string, float> actions = 2;
 }
 
