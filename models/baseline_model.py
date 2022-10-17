@@ -7,6 +7,8 @@ from realtime_kiwoom.data_provider import *
 import grpc
 import grpc_python.prediction_pb2 as prediction_pb2
 import grpc_python.prediction_pb2_grpc as prediction_pb2_grpc
+from flaml import AutoML
+import pickle
 
 class InputBuilder_BaselineModel:
   @staticmethod
@@ -102,3 +104,15 @@ class InputBuilder_BaselineModel:
   def make_binary_indicators(self, df: pd.DataFrame):
     self.make_binary_dt_features(df)
     self.make_binary_close_indicators(df)
+
+
+class BaselineModel:
+  def __init__(self, model_path):
+    with open(model_path, 'rb') as f:
+      self.model = pickle.load(f)
+
+  def predict(self, X_test):
+    return self.model.predict(X_test)
+
+  def predict_proba(self, X_test):
+    return self.model.predict_proba(X_test)
