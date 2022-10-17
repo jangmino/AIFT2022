@@ -8,6 +8,7 @@ from pykiwoom import parser
 import pandas as pd
 from collections import defaultdict
 from config.log_class import *
+from realtime_kiwoom.kiwoom_errors import KiwoomErrors
 
 class RealtimeRequestItem:
   dummy_code='dummy_code'
@@ -41,13 +42,14 @@ class RTKiwoom:
 
     self.__log_instance=Logging()
     self.__rt_agent = {}
+    self.kiwoom_errors = KiwoomErrors()
     self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
     
     self.__slots_dict = {
       "EventConnect": self.__slot_connect,
       "ReceiveTrData": self.__slot_receive_tr_data,
       "ReceiveRealData": self.__slot_receive_real_data,
-      # "ReceiveChejanData": self.__slot_receive_chejan_data,
+      "ReceiveChejanData": self.__slot_receive_chejan_data,
     }
 
     self.outside_callback_dict = outside_callback_dict
@@ -221,6 +223,10 @@ class RTKiwoom:
     ret = self.ocx.dynamicCall("GetCommRealData(QString, int)", sCode, fid)
     return ret
 
+  def __get_chejan_data(self, fid):
+    ret = self.ocx.dynamicCall("GetChejanData(int)", fid)
+    return ret
+
   def __determine_output_type(self, output_name):
     for i, output in enumerate(self.tr_items['output']):
       key = list(output.keys())[0]
@@ -228,6 +234,24 @@ class RTKiwoom:
       if key == output_name:
         return i, items
     return -1, None
+
+  def __slot_receive_chejan_data(self, gubun, item_cnt, fid_list):
+    """
+    슬롯: 체결잔고 데이터 수신 이벤트
+    Args:
+        gubun (str): '0': 접수, 체결, '1': 잔고 변경
+        item_cnt (int): 아이템 갯수
+        fid_list (str): fid list    
+    """
+    chejan_data = {'gubun': gubun}
+    for fid in fid_list.split(';'):
+      item = self.__get_chejan_data(fid)
+      chejan_data[fid]=item
+
+    if gubun == '0':
+      self.__rt_agent.realtime_callbacks["체잔:주문체결"].apply(chejan_data)
+    elif gubun == '1':
+      self.__rt_agent.realtime_callbacks["체잔:잔고"].apply(chejan_data)
 
   def __slot_receive_tr_data(self, screen, rqname, trcode, record, next):
     '''
@@ -269,3 +293,28 @@ class RTKiwoom:
     # 블록킹 종료
     if self.local_event_loop.isRunning():
       self.local_event_loop.exit()
+
+  def SendOrder(self, rqname, screen, accno, order_type, code, quantity, price, hoga, order_no):
+    """
+    주식 주문을 서버로 전송하는 메서드
+    시장가 주문시 주문단가는 0으로 입력해야 함 (가격을 입력하지 않음을 의미)
+    :param rqname: 사용자가 임의로 지정할 수 있는 요청 이름
+    :param screen: 화면번호 ('0000' 또는 '0' 제외한 숫자값으로 200개로 한정된 값
+    :param accno: 계좌번호 10자리
+    :param order_type: 1: 신규매수, 2: 신규매도, 3: 매수취소, 4: 매도취소, 5: 매수정정, 6: 매도정정
+    :param code: 종목코드
+    :param quantity: 주문수량
+    :param price: 주문단가
+    :param hoga: 00: 지정가, 03: 시장가,
+                  05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가,
+                  10: 지정가IOC, 13: 시장가IOC, 16: 최유리IOC,
+                  20: 지정가FOK, 23: 시장가FOK, 26: 최유리FOK,
+                  61: 장전시간외종가, 62: 시간외단일가, 81: 장후시간외종가
+    :param order_no: 원주문번호로 신규 주문시 공백, 정정이나 취소 주문시에는 원주문번호를 입력
+    :return:
+    """
+    ret = self.ocx.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",
+                                [rqname, screen, accno, order_type, code, quantity, price, hoga, order_no])
+    return ret
+
+

@@ -151,7 +151,7 @@ class MinuteChartDataProvider(DataProviderBase):
     ORDER BY st_code ASC, dt ASC
     ''')
     df['dt'] = pd.to_datetime(df['dt']).dt.tz_localize('Asia/Seoul')
-    return {st_code: df.query(f"st_code=='{st_code}'").set_index('dt') for st_code in map(lambda x: x[0], self.config_manager.get_candidate_ETFs())}
+    return {st_code: df.query(f"st_code=='{st_code}'").set_index('dt') for st_code in map(lambda x: x[0], self.config_manager.retrieve_candidate_ETFs())}
 
 class RealTimeTickDataPrivder(DataProviderBase):
   make_minute_chart_query = '''

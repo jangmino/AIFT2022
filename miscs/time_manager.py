@@ -3,8 +3,8 @@ import pandas as pd
 
 class TimeManager:
   # 디버그 용도로 사용할 날짜 지정: 이유 (VS에서 디버깅시 exchange_calendars 초기화에서 너무 많은 시간이 소요되기에 편의성 목적으로 추가)
-  start_dt_for_debug = pd.Timestamp('2022-09-28 09:00:00', tz='Asia/Seoul')
-  end_dt_for_debug = pd.Timestamp('2022-09-28 15:30:00', tz='Asia/Seoul')
+  start_dt_for_debug = pd.Timestamp('2022-10-17 09:00:00', tz='Asia/Seoul')
+  end_dt_for_debug = pd.Timestamp('2022-10-17 15:30:00', tz='Asia/Seoul')
 
   @staticmethod
   def get_now():
