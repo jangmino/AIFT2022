@@ -25,7 +25,7 @@ message PredictRequest {
 }
 
 message PredictResponse {
-  // X: 0.7, NOP: 0.3
-  map<string, float> actions = 2;
+  // X: 0.7, Y: 0.2, NOP: 0.1
+  map<string, float> actions = 1;
 }
 

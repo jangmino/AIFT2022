@@ -1,6 +1,16 @@
 import exchange_calendars as xcals
 import pandas as pd
 
+class ToggledMinutesChecker:
+  def __init__(self, ts:pd.Timestamp):
+    self.ts = ts
+
+  def updae_and_check_if_minute_changed(self, new_ts:pd.Timestamp):
+    "분이 바꼈나 여부 리턴"
+    prev_minute = self.ts.minute
+    self.ts = new_ts
+    return prev_minute != self.ts.minute
+
 class TimeManager:
   # 디버그 용도로 사용할 날짜 지정: 이유 (VS에서 디버깅시 exchange_calendars 초기화에서 너무 많은 시간이 소요되기에 편의성 목적으로 추가)
   start_dt_for_debug = pd.Timestamp('2022-10-17 09:00:00', tz='Asia/Seoul')

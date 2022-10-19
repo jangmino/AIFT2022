@@ -1,21 +1,38 @@
 <config>
   <PATHS>
-    <work>프레젝트로컬경로</work>
+    <work>::작업경로::</work>
   </PATHS>
   <DBMS>
     <mysql>
       <host>localhost</host>
       <user>root</user>
-      <password>root</password>
-      <database>dbname</database>
+      <password>::암호::</password>
+      <database>::디비명::</database>
     </mysql>
-    <sqlite>
-      <database>db\dbname.sqlite3</database>
-    </sqlite>
+    <sqlite3>
+      <database>db\kiwoom_db.sqlite3</database>
+    </sqlite3>
+    <tables>
+      <table type="history">
+        <name>data_in_minute</name>
+        <drop_table>0</drop_table>
+      </table>
+      <table type="today">
+        <name>today_in_minute</name>
+        <drop_table>1</drop_table>
+      </table>
+    </tables>
   </DBMS>
+  <Models>
+    <Baseline>::모델경로::</Baseline>
+  </Models>
+  <Candidates>
+    <code desc="KONDEX 200" action_tag="X">069500</code>
+    <code desc="KODEX 인버스" action_tag="Y">114800</code>
+  </Candidates>
   <Login>
-    <id>아이디</id>
-    <password>비밀번호</password>
-    <cert_password>공인인증서비밀번호</cert_password>
+    <id>::키움계정명::</id>
+    <password>::키움암호::</password>
+    <cert_password>::인증서암호::</cert_password>
   </Login>
 </config>

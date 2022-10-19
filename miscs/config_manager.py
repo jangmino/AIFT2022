@@ -10,6 +10,9 @@ class ConfigManager:
 
   def get_work_path(self):
     return self.root.find('./PATHS').find('work').text
+
+  def get_path(self, tag):
+    return self.root.find('./PATHS').find(tag).text
   
   def get_database(self, dbtype='sqlite3'):
     node = self.root.find('./DBMS').find(dbtype)
@@ -27,6 +30,13 @@ class ConfigManager:
       'drop_table':True if table.find('drop_table').text=='1' else False
       }
     return dic
+
+  def get_model_info(self, tag):
+    model = self.root.find('./Models').find(tag)
+    return {
+      'model_path': model.find('model_path').text,
+      'description': model.find('description').text
+    }
   
   def retrieve_candidate_ETFs(self):
     """

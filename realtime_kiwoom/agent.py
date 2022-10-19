@@ -5,7 +5,7 @@ from realtime_kiwoom.rt_kiwoom import *
 import pandas as pd
 import time
 from enum import IntEnum
-from miscs.time_manager import TimeManager
+from miscs.time_manager import TimeManager, ToggledMinutesChecker
 from miscs.config_manager import ConfigManager
 from realtime_kiwoom.data_provider import *
 from PyQt5.QtCore import *
@@ -13,6 +13,7 @@ from queue import Queue
 from config.log_class import *
 from realtime_kiwoom.kiwoom_type import *
 from realtime_kiwoom.action import ActionManager
+from grpc_python.request import RequestBuilder
 
 
 class MarketState(IntEnum):
@@ -313,6 +314,7 @@ class Account:
     """
     종목별평가결과 반영
     """
+    self.__individual_asset_dict = {}
     for i, row_data in data.iterrows():
       item_code = row_data['종목번호'][1:]
       self.__individual_asset_dict[item_code] = {
@@ -331,6 +333,7 @@ class Account:
     """
     미체결 주문 반영
     """
+    self.__unexecuted_order_dict = {}
     for i, row_data in data.iterrows():
       order_no = row_data['주문번호']
       self.__unexecuted_order_dict[order_no] = {
@@ -361,7 +364,16 @@ class Account:
       return True
 
     return False
-  # get 함수들
+
+  def update_individual_asset_and_check_if_empty(self, items):
+    """보유수량이 0이면 제거"""
+    code = items['종목코드']
+    if items['보유수량'] == 0:
+      del self.__individual_asset_dict[code]
+      return True
+    
+    self.__individual_asset_dict[code].update(items)
+    return False
 
   def holds(self, code):
     return code in self.__individual_asset_dict
@@ -394,6 +406,7 @@ class AgentState(IntEnum):
   TERMINATED = 5 # 종료됨
 
 class AgentStateManager:
+  # TODO: 사용하지 않은 기능으로 폐기 예정
   def __init__(self, agent):
     self.__agent = agent
     self.state = AgentState.INIT
@@ -464,8 +477,9 @@ class CombinedMinuteData:
   def today_minute_provider(self):
     return self.__today_minute_provider
 
-  def get_combined_data(self, code):
-    return self.__combined_data[code]
+  @property
+  def combined_data(self):
+    return self.__combined_data
 
   def __get_last_inserted_ts(self):
     return max([v.index[-1] for k, v in self.__pre_pivot_data.items()])
@@ -510,11 +524,12 @@ class RTAgent:
     self.__timer = None
     self.__config_manager = config_manager
     self.__rt_data_provider = RealTimeTickDataPrivder.Factory(config_manager)
-    self.__time_manager = TimeManager(fast_debug=True)
+    self.__time_manager = TimeManager(fast_debug=False) 
     self.__market_state = MarketState.NOT_OPERATIONAL
     self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
     self.__recovery_manager = None
     self.__action_manager = None
+    self.__toggled_minutes_checker = None
     self.minute_data_manager = CombinedMinuteData(
       self,
       history_minute_provider=MinuteChartDataProvider.Factory(config_manager, tag='history'),
@@ -558,7 +573,6 @@ class RTAgent:
       self.__market_state = MarketState.BEFORE_OPEN
     elif status == '3':
       self.__market_state = MarketState.OPEN
-      #TODO: 문제 있음
       self.__time_manager.set_ts_pivot(TimeManager.get_now() + pd.Timedelta(seconds=10))
       self.minute_data_manager.finalize_pre_pivot_data()
     elif status == '2':
@@ -594,7 +608,6 @@ class RTAgent:
       if self.__action_manager:
         self.__action_manager.update_execution_completion_info(items)
       self.get_logger().info(f"주문체결 완료: 종목코드={items['종목코드']} 주문번호={items['주문번호']}")
-    return items
 
   def apply_chejan_account_balance(self, real_data):
     # self.get_logger().info(real_data)
@@ -604,7 +617,8 @@ class RTAgent:
 
     items = {tag:transform_dic[tag](real_data[fid]) for tag, fid in field_dic.items() if fid in real_data}
     self.get_logger().info(items)
-    return items
+    if self.__account.update_individual_asset_and_check_if_empty(items):
+      self.get_logger().info(f"개별종목 잔고 소진: 관리에서 제외됨 종목코드={items['종목코드']}")
 
   @property
   def login_info(self):
@@ -697,17 +711,19 @@ class RTAgent:
     """
     매수-매도 테스트
     """
-    # num_sell_orders = 0
-    # for code, asset_info in self.__account.individual_asset_dict.items():
-    #   self.try_to_sell(code, asset_info)
-    #   num_sell_orders += 1
-    #   break
-
-    # if num_sell_orders == 0:
-    #   self.try_to_buy("114800", 1)
-
     self.__action_manager = ActionManager(self, 'Y')
     self.__test_is_done = True
+
+  def treat_response(self, prediction_dic:dict):
+    """
+    grpc 서버로부터 받은 예측 결과를 처리
+    """
+    tag, prob = sorted(prediction_dic.items(), key=lambda x: x[1])[-1]
+    if not self.__action_manager:
+      self.get_logger().info(f"Decision from Server: {tag=}, {prob=}")
+      self.__action_manager = ActionManager(self, tag)
+    else:
+      self.get_logger().info(f"이미 ActionManager가 존재!!! 이번 응답 무시함. ")
 
   def update_deposit(self):
     dic = {"계좌번호":self.login_info['account_nos'][0], "비밀번호":"0000", "비밀번호입력매체구분":"00", "조회구분":1}
@@ -751,27 +767,24 @@ class RTAgent:
     self.__timer.setInterval(1000)
     self.__timer.timeout.connect(self.__timer_callback)
     self.__timer.start()
+    self.__toggled_minutes_checker = ToggledMinutesChecker(TimeManager.get_now())
 
   # 타이머 콜백 함수 (1초마다 호출)
   def __timer_callback(self):
-    # self.get_logger().info(f"timer callback")
-
-    second = self.__time_manager.get_now().second
+    # 분이 변경 되었는지
+    is_new_minute = self.__toggled_minutes_checker.updae_and_check_if_minute_changed(TimeManager.get_now())
 
     # 복구 매니저가 필요하면 이에 대한 디스패치 수행
     if self.__recovery_manager:
       self.__recovery_manager.dispatch_request()
 
-    if second == 0:
-      self.update_account_info()
-
-    normal_state = (
-      (self.__recovery_manager and self.__recovery_manager.state == RecoveryState.RECOVERED) or 
-      (self.__launched_state == LaunchedTimingState.LAUNCHED_BEFORE_OPEN and self.__market_state == MarketState.OPEN)
-    )
+    # 거래 가능 상황
+    # 시장 OPEN 상태 & 복구매니저가 없는 경우: 장 개장전 기동된 경우임
+    # 시장 OPEN 상태 & 복구매니저가 복구 완료한 경우: 장 개장후 기동되었으며 복구가 된 상황
+    can_do_trading = (self.__market_state == MarketState.OPEN) and ( self.__recovery_manager is None or self.__recovery_manager.is_recovered() )
     
-    # 정상의 경우
-    if normal_state:
+    # 거래 가능 상황이라면
+    if can_do_trading:
       # 매초 처리할 내용들
       if self.__action_manager:
         self.__action_manager.step()
@@ -779,27 +792,28 @@ class RTAgent:
           self.get_logger().info("ActionManager completed")
           self.__action_manager = None
 
+      if is_new_minute:
+        self.update_account_info()
+
       # 매 분마다 처리할 내용들
-      if second == 0 and self.__time_manager.get_ts_pivot():
+      if is_new_minute and self.__time_manager.get_ts_pivot():
         ts_from = self.__time_manager.get_ts_pivot()
         ts_end = TimeManager.ts_floor_time(TimeManager.get_now())
-        df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
-        self.get_logger().info(f"{df.iloc[0]['cnt']} real tick rows are inserted.")
+        # df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
+        # self.get_logger().info(f"{df.iloc[0]['cnt']} real tick rows are inserted.")
         if ts_end - ts_from >= pd.Timedelta(1, unimt='m'):
           self.get_logger().info(f"[실시간 분봉 계산 범위: {ts_from}, {ts_end})")
           from_pivot_df = self.__rt_data_provider.make_minute_chart_df(ts_from, ts_end)
           self.minute_data_manager.update_minute_data_realtime(from_pivot_df)
-          self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
-          self.get_logger().info(from_pivot_df)
-          # # 계좌 업데이트
-          # self.update_account_info()
-        self.__rt_data_provider.retrieve_all().to_csv('realtime_ticks.csv', index=False)
-        # 매수-매도 테스트
-        if not self.__test_is_done:
-          self.__test_buy_and_sell()
+          # self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
+          # self.get_logger().info(from_pivot_df)
 
-      # 계좌 업데이트
-      
+          if self.minute_data_manager.combined_data:
+            # 만약 리커버리 시간이 15시 20분과 30분 이내 라면, 유입된 실시간 틱이 없어 combined_data가 비어 있게 된다. 
+            request = RequestBuilder(self, self.minute_data_manager.combined_data, self.config_manager, window_size=720)
+            print(self.minute_data_manager.combined_data)
+            response = request.send_and_wait()
+            self.treat_response(response)
 
   ## 콜백 함수들
   ## TODO: 필요한 콜백만 추가
@@ -875,6 +889,8 @@ class RTAgent:
     self.launch_timer()
 
     if False and not self.__test_is_done:
+      # TODO: 디버깅 목적으로 남겨둠; 제거 필요
+      # 임의 때나 실행시켜도 정상 실행인 것처럼 취급하기 위함: 
       self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
       self.apply_real_time_market_status({'215':'3'})
     elif self.__time_manager.get_timestamp('MainStageEntered') > self.__time_manager.when_to_open():
