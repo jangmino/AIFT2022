@@ -63,6 +63,10 @@ if __name__ == "__main__":
   table_info = cm.get_tables()
 
   if args.daily:
+    tm = TimeManager()
+    if not tm.is_today_open():
+      print("Today is not a open day... will be terminated.")
+      sys.exit(0)
     ts = TimeManager.ts_day_shift(TimeManager.get_now(), days=-args.daysago, floor=True)
     day_str = TimeManager.ts_to_str(ts, format="%Y%m%d")
     from_dt_str = TimeManager.ts_to_str(ts, format="%Y%m%d090000")

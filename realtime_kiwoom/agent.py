@@ -772,7 +772,13 @@ class RTAgent:
   # 타이머 콜백 함수 (1초마다 호출)
   def __timer_callback(self):
     # 분이 변경 되었는지
-    is_new_minute = self.__toggled_minutes_checker.updae_and_check_if_minute_changed(TimeManager.get_now())
+    ts_now = TimeManager.get_now()
+    is_new_minute = self.__toggled_minutes_checker.updae_and_check_if_minute_changed(ts_now)
+
+    # 프로그램 강제 종료 조건
+    if self.__market_state == MarketState.AFTER_CLOSE:
+      self.get_logger().info(f"장 마감으로 인한 프로그램 종료: {TimeManager.get_now(ts_now)}")
+      sys.exit(0)
 
     # 복구 매니저가 필요하면 이에 대한 디스패치 수행
     if self.__recovery_manager:
