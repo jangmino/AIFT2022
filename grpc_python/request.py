@@ -28,4 +28,4 @@ class RequestBuilder:
     with grpc.insecure_channel('localhost:50051') as channel:
       stub = prediction_pb2_grpc.PredictorStub(channel)
       response = stub.Predict(self.build())
-    return dict(response.action)
+    return dict(response.actions)
