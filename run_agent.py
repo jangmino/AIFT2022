@@ -16,6 +16,9 @@ if __name__ == "__main__":
     elif not agent.time_manager.less_than_minutes_before_open(30):
         agent.get_logger().warning("Now does not reach the open time - 30 minutes... will be terminated.")
         sys.exit(0)
+    elif not agent.time_manager.is_now_open():
+        agent.get_logger().warning("Now is after close time... will be terminated.")
+        sys.exit(0)
 
     agent.get_logger().info('Start PreStage')
     agent.PreStage()
