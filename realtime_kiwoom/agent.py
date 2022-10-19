@@ -314,6 +314,7 @@ class Account:
     """
     종목별평가결과 반영
     """
+    self.__individual_asset_dict = {}
     for i, row_data in data.iterrows():
       item_code = row_data['종목번호'][1:]
       self.__individual_asset_dict[item_code] = {
@@ -332,6 +333,7 @@ class Account:
     """
     미체결 주문 반영
     """
+    self.__unexecuted_order_dict = {}
     for i, row_data in data.iterrows():
       order_no = row_data['주문번호']
       self.__unexecuted_order_dict[order_no] = {
@@ -362,7 +364,16 @@ class Account:
       return True
 
     return False
-  # get 함수들
+
+  def update_individual_asset_and_check_if_empty(self, items):
+    """보유수량이 0이면 제거"""
+    code = items['종목코드']
+    if items['보유수량'] == 0:
+      del self.__individual_asset_dict[code]
+      return True
+    
+    self.__individual_asset_dict[code].update(items)
+    return False
 
   def holds(self, code):
     return code in self.__individual_asset_dict
@@ -395,6 +406,7 @@ class AgentState(IntEnum):
   TERMINATED = 5 # 종료됨
 
 class AgentStateManager:
+  # TODO: 사용하지 않은 기능으로 폐기 예정
   def __init__(self, agent):
     self.__agent = agent
     self.state = AgentState.INIT
@@ -561,7 +573,6 @@ class RTAgent:
       self.__market_state = MarketState.BEFORE_OPEN
     elif status == '3':
       self.__market_state = MarketState.OPEN
-      #TODO: 문제 있음
       self.__time_manager.set_ts_pivot(TimeManager.get_now() + pd.Timedelta(seconds=10))
       self.minute_data_manager.finalize_pre_pivot_data()
     elif status == '2':
@@ -597,7 +608,6 @@ class RTAgent:
       if self.__action_manager:
         self.__action_manager.update_execution_completion_info(items)
       self.get_logger().info(f"주문체결 완료: 종목코드={items['종목코드']} 주문번호={items['주문번호']}")
-    return items
 
   def apply_chejan_account_balance(self, real_data):
     # self.get_logger().info(real_data)
@@ -607,7 +617,8 @@ class RTAgent:
 
     items = {tag:transform_dic[tag](real_data[fid]) for tag, fid in field_dic.items() if fid in real_data}
     self.get_logger().info(items)
-    return items
+    if self.__account.update_individual_asset_and_check_if_empty(items):
+      self.get_logger().info(f"개별종목 잔고 소진: 관리에서 제외됨 종목코드={items['종목코드']}")
 
   @property
   def login_info(self):
@@ -767,13 +778,13 @@ class RTAgent:
     if self.__recovery_manager:
       self.__recovery_manager.dispatch_request()
 
-    normal_state = (
-      (self.__recovery_manager and self.__recovery_manager.state == RecoveryState.RECOVERED) or 
-      (self.__launched_state == LaunchedTimingState.LAUNCHED_BEFORE_OPEN and self.__market_state == MarketState.OPEN)
-    )
+    # 거래 가능 상황
+    # 시장 OPEN 상태 & 복구매니저가 없는 경우: 장 개장전 기동된 경우임
+    # 시장 OPEN 상태 & 복구매니저가 복구 완료한 경우: 장 개장후 기동되었으며 복구가 된 상황
+    can_do_trading = (self.__market_state == MarketState.OPEN) and ( self.__recovery_manager is None or self.__recovery_manager.is_recovered() )
     
-    # 정상의 경우
-    if normal_state:
+    # 거래 가능 상황이라면
+    if can_do_trading:
       # 매초 처리할 내용들
       if self.__action_manager:
         self.__action_manager.step()
@@ -797,14 +808,12 @@ class RTAgent:
           # self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
           # self.get_logger().info(from_pivot_df)
 
-          request = RequestBuilder(self, self.minute_data_manager.combined_data, self.config_manager, window_size=720)
-          response = request.send_and_wait()
-          self.treat_response(response)
-
-        # self.__rt_data_provider.retrieve_all().to_csv('realtime_ticks.csv', index=False)
-        # 매수-매도 테스트
-        # if not self.__test_is_done:
-        #   self.__test_buy_and_sell()
+          if self.minute_data_manager.combined_data:
+            # 만약 리커버리 시간이 15시 20분과 30분 이내 라면, 유입된 실시간 틱이 없어 combined_data가 비어 있게 된다. 
+            request = RequestBuilder(self, self.minute_data_manager.combined_data, self.config_manager, window_size=720)
+            print(self.minute_data_manager.combined_data)
+            response = request.send_and_wait()
+            self.treat_response(response)
 
   ## 콜백 함수들
   ## TODO: 필요한 콜백만 추가
@@ -880,6 +889,8 @@ class RTAgent:
     self.launch_timer()
 
     if False and not self.__test_is_done:
+      # TODO: 디버깅 목적으로 남겨둠; 제거 필요
+      # 임의 때나 실행시켜도 정상 실행인 것처럼 취급하기 위함: 
       self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
       self.apply_real_time_market_status({'215':'3'})
     elif self.__time_manager.get_timestamp('MainStageEntered') > self.__time_manager.when_to_open():
