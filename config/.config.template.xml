@@ -23,6 +23,9 @@
       </table>
     </tables>
   </DBMS>
+  <Models>
+    <Baseline>::모델경로::</Baseline>
+  </Models>
   <Candidates>
     <code desc="KONDEX 200" action_tag="X">069500</code>
     <code desc="KODEX 인버스" action_tag="Y">114800</code>

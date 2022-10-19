@@ -5,7 +5,7 @@ from realtime_kiwoom.rt_kiwoom import *
 import pandas as pd
 import time
 from enum import IntEnum
-from miscs.time_manager import TimeManager
+from miscs.time_manager import TimeManager, ToggledMinutesChecker
 from miscs.config_manager import ConfigManager
 from realtime_kiwoom.data_provider import *
 from PyQt5.QtCore import *
@@ -512,11 +512,12 @@ class RTAgent:
     self.__timer = None
     self.__config_manager = config_manager
     self.__rt_data_provider = RealTimeTickDataPrivder.Factory(config_manager)
-    self.__time_manager = TimeManager(fast_debug=True)
+    self.__time_manager = TimeManager(fast_debug=False) 
     self.__market_state = MarketState.NOT_OPERATIONAL
     self.__launched_state = LaunchedTimingState.LAUNCHED_BEFORE_OPEN
     self.__recovery_manager = None
     self.__action_manager = None
+    self.__toggled_minutes_checker = None
     self.minute_data_manager = CombinedMinuteData(
       self,
       history_minute_provider=MinuteChartDataProvider.Factory(config_manager, tag='history'),
@@ -708,7 +709,7 @@ class RTAgent:
     """
     tag, prob = sorted(prediction_dic.items(), key=lambda x: x[1])[-1]
     if not self.__action_manager:
-      self.get_logger.info(f"Decision from Server: {tag=}, {prob=}")
+      self.get_logger().info(f"Decision from Server: {tag=}, {prob=}")
       self.__action_manager = ActionManager(self, tag)
     else:
       self.get_logger().info(f"이미 ActionManager가 존재!!! 이번 응답 무시함. ")
@@ -755,19 +756,16 @@ class RTAgent:
     self.__timer.setInterval(1000)
     self.__timer.timeout.connect(self.__timer_callback)
     self.__timer.start()
+    self.__toggled_minutes_checker = ToggledMinutesChecker(TimeManager.get_now())
 
   # 타이머 콜백 함수 (1초마다 호출)
   def __timer_callback(self):
-    # self.get_logger().info(f"timer callback")
-
-    second = self.__time_manager.get_now().second
+    # 분이 변경 되었는지
+    is_new_minute = self.__toggled_minutes_checker.updae_and_check_if_minute_changed(TimeManager.get_now())
 
     # 복구 매니저가 필요하면 이에 대한 디스패치 수행
     if self.__recovery_manager:
       self.__recovery_manager.dispatch_request()
-
-    if second == 0:
-      self.update_account_info()
 
     normal_state = (
       (self.__recovery_manager and self.__recovery_manager.state == RecoveryState.RECOVERED) or 
@@ -783,8 +781,11 @@ class RTAgent:
           self.get_logger().info("ActionManager completed")
           self.__action_manager = None
 
+      if is_new_minute:
+        self.update_account_info()
+
       # 매 분마다 처리할 내용들
-      if second == 0 and self.__time_manager.get_ts_pivot():
+      if is_new_minute and self.__time_manager.get_ts_pivot():
         ts_from = self.__time_manager.get_ts_pivot()
         ts_end = TimeManager.ts_floor_time(TimeManager.get_now())
         # df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
@@ -796,8 +797,7 @@ class RTAgent:
           # self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
           # self.get_logger().info(from_pivot_df)
 
-          request = RequestBuilder(self.minute_data_manager.combined_data, self.config_manager)
-          request.build()
+          request = RequestBuilder(self, self.minute_data_manager.combined_data, self.config_manager, window_size=720)
           response = request.send_and_wait()
           self.treat_response(response)
 
