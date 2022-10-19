@@ -13,6 +13,7 @@ from queue import Queue
 from config.log_class import *
 from realtime_kiwoom.kiwoom_type import *
 from realtime_kiwoom.action import ActionManager
+from grpc_python.request import RequestBuilder
 
 
 class MarketState(IntEnum):
@@ -464,8 +465,9 @@ class CombinedMinuteData:
   def today_minute_provider(self):
     return self.__today_minute_provider
 
-  def get_combined_data(self, code):
-    return self.__combined_data[code]
+  @property
+  def combined_data(self):
+    return self.__combined_data
 
   def __get_last_inserted_ts(self):
     return max([v.index[-1] for k, v in self.__pre_pivot_data.items()])
@@ -697,17 +699,19 @@ class RTAgent:
     """
     매수-매도 테스트
     """
-    # num_sell_orders = 0
-    # for code, asset_info in self.__account.individual_asset_dict.items():
-    #   self.try_to_sell(code, asset_info)
-    #   num_sell_orders += 1
-    #   break
-
-    # if num_sell_orders == 0:
-    #   self.try_to_buy("114800", 1)
-
     self.__action_manager = ActionManager(self, 'Y')
     self.__test_is_done = True
+
+  def treat_response(self, prediction_dic:dict):
+    """
+    grpc 서버로부터 받은 예측 결과를 처리
+    """
+    tag, prob = sorted(prediction_dic.items(), key=lambda x: x[1])[-1]
+    if not self.__action_manager:
+      self.get_logger.info(f"Decision from Server: {tag=}, {prob=}")
+      self.__action_manager = ActionManager(self, tag)
+    else:
+      self.get_logger().info(f"이미 ActionManager가 존재!!! 이번 응답 무시함. ")
 
   def update_deposit(self):
     dic = {"계좌번호":self.login_info['account_nos'][0], "비밀번호":"0000", "비밀번호입력매체구분":"00", "조회구분":1}
@@ -783,23 +787,24 @@ class RTAgent:
       if second == 0 and self.__time_manager.get_ts_pivot():
         ts_from = self.__time_manager.get_ts_pivot()
         ts_end = TimeManager.ts_floor_time(TimeManager.get_now())
-        df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
-        self.get_logger().info(f"{df.iloc[0]['cnt']} real tick rows are inserted.")
+        # df = self.__rt_data_provider.query('SELECT count(*) cnt FROM today_in_ticks')
+        # self.get_logger().info(f"{df.iloc[0]['cnt']} real tick rows are inserted.")
         if ts_end - ts_from >= pd.Timedelta(1, unimt='m'):
           self.get_logger().info(f"[실시간 분봉 계산 범위: {ts_from}, {ts_end})")
           from_pivot_df = self.__rt_data_provider.make_minute_chart_df(ts_from, ts_end)
           self.minute_data_manager.update_minute_data_realtime(from_pivot_df)
-          self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
-          self.get_logger().info(from_pivot_df)
-          # # 계좌 업데이트
-          # self.update_account_info()
-        self.__rt_data_provider.retrieve_all().to_csv('realtime_ticks.csv', index=False)
-        # 매수-매도 테스트
-        if not self.__test_is_done:
-          self.__test_buy_and_sell()
+          # self.minute_data_manager.get_combined_data('069500')[-400:].to_csv('probe_realtime_minute.csv')
+          # self.get_logger().info(from_pivot_df)
 
-      # 계좌 업데이트
-      
+          request = RequestBuilder(self.minute_data_manager.combined_data, self.config_manager)
+          request.build()
+          response = request.send_and_wait()
+          self.treat_response(response)
+
+        # self.__rt_data_provider.retrieve_all().to_csv('realtime_ticks.csv', index=False)
+        # 매수-매도 테스트
+        # if not self.__test_is_done:
+        #   self.__test_buy_and_sell()
 
   ## 콜백 함수들
   ## TODO: 필요한 콜백만 추가
