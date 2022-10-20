@@ -14,7 +14,7 @@ Artificial Intelligence Financial Trading 2022
 - 확보한 데이터를 MySQL, SQLite에 추가하는 기능 개발 (주피터 노트북)
 
 참고
-- pykiwoom: (https://github.com/sharebook-kr/pykiwoom) 의 기능을 활용
+- ~~pykiwoom: (https://github.com/sharebook-kr/pykiwoom) 일부 참고~~
 
 ## 실시간 시스템
 
@@ -29,16 +29,31 @@ Artificial Intelligence Financial Trading 2022
 - 분봉 데이터 계산
 - 매수/매도 로직 계산
 - 매수/매도 주문
+- 장애처리
+    - 장 중에 재기동시 복구 절차
 
-장애처리
-- 장 중에 재기동시 복구 절차
+기술적 지표/백테스팅 (브랜치: feature/techinal_indicators)
+- Technical indicators
+- 베이스라인 모델
+    - flaml 활용하여 lightgbm 분류 문제 최적화
+- Backtesting
 
 예측서버 (브랜치: feature/pred_server_grpc)
 - gRPC 서버-클라이언트 구현
 
-기술적 지표/백테스팅 (브랜치: feature/techinal_indicators)
-- Technical indicators
-- Backtesting
+## 설치 및 재현방법
 
+### 콘다 env 생성
+
+AIFT
+- 32bit
+- 키움 OpenAPI 연동 및, 실시간 액션 수행 에이전트
+- gRPC 클라이언트
+
+py310_64
+- 64 비트
+- 예측 서버 개발 및 서버 구동
+- gRPC 서버
+## 자동화
 
 등등

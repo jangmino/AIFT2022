@@ -817,7 +817,7 @@ class RTAgent:
           if self.minute_data_manager.combined_data:
             # 만약 리커버리 시간이 15시 20분과 30분 이내 라면, 유입된 실시간 틱이 없어 combined_data가 비어 있게 된다. 
             request = RequestBuilder(self, self.minute_data_manager.combined_data, self.config_manager, window_size=720)
-            print(self.minute_data_manager.combined_data)
+            # print(self.minute_data_manager.combined_data)
             response = request.send_and_wait()
             self.treat_response(response)
 
