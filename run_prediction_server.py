@@ -25,7 +25,7 @@ class PredictionServer(prediction_pb2_grpc.PredictorServicer):
         y_proba = self.model.predict_proba(input_builder.X_test)
         # self.logger.info(f"{y_proba=}")
 
-        self.logger.info(f"{input_builder.X_test.index[-1]}")
+        self.logger.info(f"{input_builder.X_test.index[-1]}; NOP={y_proba[0][0]} X={y_proba[0][1]} Y={y_proba[0][2]}")
 
         return prediction_pb2.PredictResponse(actions={'NOP':y_proba[0][0], 'X':y_proba[0][1], 'Y':y_proba[0][2]})
 
