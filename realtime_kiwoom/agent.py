@@ -780,7 +780,7 @@ class RTAgent:
 
     # 프로그램 강제 종료 조건
     if self.__market_state == MarketState.AFTER_CLOSE:
-      self.get_logger().info(f"장 마감으로 인한 프로그램 종료: {TimeManager.get_now(ts_now)}")
+      self.get_logger().info(f"장 마감으로 인한 프로그램 종료: {TimeManager.get_now()}")
       sys.exit(0)
 
     # 복구 매니저가 필요하면 이에 대한 디스패치 수행
