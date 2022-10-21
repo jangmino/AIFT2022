@@ -787,7 +787,7 @@ class RTAgent:
     # 거래 가능 상황
     # 시장 OPEN 상태 & 복구매니저가 없는 경우: 장 개장전 기동된 경우임
     # 시장 OPEN 상태 & 복구매니저가 복구 완료한 경우: 장 개장후 기동되었으며 복구가 된 상황
-    can_do_trading = (self.__market_state == MarketState.OPEN) and ( self.__recovery_manager is None or self.__recovery_manager.is_recovered() )
+    can_do_trading = (self.__market_state == MarketState.OPEN) and ( self.__recovery_manager is None or self.__recovery_manager.state == RecoveryState.RECOVERED )
     
     # 거래 가능 상황이라면
     if can_do_trading:
