@@ -365,14 +365,17 @@ class Account:
 
     return False
 
-  def update_individual_asset_and_check_if_empty(self, items):
+  def update_individual_asset_and_check_if_empty(self, data):
     """보유수량이 0이면 제거"""
-    code = items['종목코드']
-    if items['보유수량'] == 0:
+    code = data['종목코드']
+    if data['보유수량'] == 0:
       del self.__individual_asset_dict[code]
       return True
     
-    self.__individual_asset_dict[code].update(items)
+    if code in self.__individual_asset_dict:
+      self.__individual_asset_dict[code].update(data)
+    else:
+      self.__individual_asset_dict[code] = data
     return False
 
   def holds(self, code):
