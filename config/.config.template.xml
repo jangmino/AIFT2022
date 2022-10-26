@@ -1,6 +1,9 @@
 <config>
   <PATHS>
     <work>::작업경로::</work>
+    <log_config_path>.\config\logging.conf</log_config_path>
+    <agent_log_path>.\log_agent</agent_log_path>
+    <server_log_path>.\log_server</server_log_path> 
   </PATHS>
   <DBMS>
     <mysql>
@@ -24,7 +27,10 @@
     </tables>
   </DBMS>
   <Models>
-    <Baseline>::모델경로::</Baseline>
+    <Baseline>
+      <model_path>.\models\baseline\.automl_3m.pkl</model_path>
+      <description>trained by flaml</description>
+    </Baseline>
   </Models>
   <Candidates>
     <code desc="KONDEX 200" action_tag="X">069500</code>

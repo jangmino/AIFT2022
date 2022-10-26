@@ -159,4 +159,10 @@ probe_realtime_minute.csv
 realtime_ticks_20220926_오전.csv
 realtime_ticks.csv
 TA_Lib-0.4.24-cp38-cp38-win32.whl
-config/.config _debug_dev.xml
+config/.config_debug_dev.xml
+.DS_Store
+
+!data/.gitkeep
+!log/.gitkeep
+!log_agent/.gitkeep
+!log_server/.gitkeep

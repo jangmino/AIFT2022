@@ -365,14 +365,17 @@ class Account:
 
     return False
 
-  def update_individual_asset_and_check_if_empty(self, items):
+  def update_individual_asset_and_check_if_empty(self, data):
     """보유수량이 0이면 제거"""
-    code = items['종목코드']
-    if items['보유수량'] == 0:
+    code = data['종목코드']
+    if data['보유수량'] == 0:
       del self.__individual_asset_dict[code]
       return True
     
-    self.__individual_asset_dict[code].update(items)
+    if code in self.__individual_asset_dict:
+      self.__individual_asset_dict[code].update(data)
+    else:
+      self.__individual_asset_dict[code] = data
     return False
 
   def holds(self, code):
@@ -772,7 +775,13 @@ class RTAgent:
   # 타이머 콜백 함수 (1초마다 호출)
   def __timer_callback(self):
     # 분이 변경 되었는지
-    is_new_minute = self.__toggled_minutes_checker.updae_and_check_if_minute_changed(TimeManager.get_now())
+    ts_now = TimeManager.get_now()
+    is_new_minute = self.__toggled_minutes_checker.updae_and_check_if_minute_changed(ts_now)
+
+    # 프로그램 강제 종료 조건
+    if self.__market_state == MarketState.AFTER_CLOSE:
+      self.get_logger().info(f"장 마감으로 인한 프로그램 종료: {TimeManager.get_now()}")
+      sys.exit(0)
 
     # 복구 매니저가 필요하면 이에 대한 디스패치 수행
     if self.__recovery_manager:
@@ -781,7 +790,7 @@ class RTAgent:
     # 거래 가능 상황
     # 시장 OPEN 상태 & 복구매니저가 없는 경우: 장 개장전 기동된 경우임
     # 시장 OPEN 상태 & 복구매니저가 복구 완료한 경우: 장 개장후 기동되었으며 복구가 된 상황
-    can_do_trading = (self.__market_state == MarketState.OPEN) and ( self.__recovery_manager is None or self.__recovery_manager.is_recovered() )
+    can_do_trading = (self.__market_state == MarketState.OPEN) and ( self.__recovery_manager is None or self.__recovery_manager.state == RecoveryState.RECOVERED )
     
     # 거래 가능 상황이라면
     if can_do_trading:
@@ -811,7 +820,7 @@ class RTAgent:
           if self.minute_data_manager.combined_data:
             # 만약 리커버리 시간이 15시 20분과 30분 이내 라면, 유입된 실시간 틱이 없어 combined_data가 비어 있게 된다. 
             request = RequestBuilder(self, self.minute_data_manager.combined_data, self.config_manager, window_size=720)
-            print(self.minute_data_manager.combined_data)
+            # print(self.minute_data_manager.combined_data)
             response = request.send_and_wait()
             self.treat_response(response)
 
