@@ -163,6 +163,7 @@ config/.config_debug_dev.xml
 .DS_Store
 
 !data/.gitkeep
+!db/.gitkeep
 !log/.gitkeep
 !log_agent/.gitkeep
 !log_server/.gitkeep
