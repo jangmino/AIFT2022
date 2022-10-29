@@ -28,7 +28,7 @@
   </DBMS>
   <Models>
     <Baseline>
-      <model_path>.\models\baseline\.automl_3m.pkl</model_path>
+      <model_path>.\models\baseline\automl_10m.pkl</model_path>
       <description>trained by flaml</description>
     </Baseline>
   </Models>
