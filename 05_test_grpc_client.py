@@ -40,8 +40,7 @@ if __name__ == "__main__":
     # agent.get_logger().info(f"Prediction client received: {dict(response.actions)}")
 
     agent.get_logger().info(f"Prediction client before request")
-    request = RequestBuilder(history_minute_dic, cm, window_size=720)
-    request.build()
+    request = RequestBuilder(agent, history_minute_dic, cm, window_size=720)
     response = request.send_and_wait()
     agent.get_logger().info(f"Prediction client received: {response}")
 
