@@ -79,7 +79,7 @@ pyrsistent==0.18.1
 python-dateutil==2.8.2
 pytz==2022.5
 pywin32==302
-pywinpty @ file:///C:/Sungshin/Lectures/2022/repos/pywinpty-2.0.5-cp38-none-win32.whl
+pywinpty @ file:///c:/Sungshin/Lectures/2022/repos/AIFT2022/pip_install/pywinpty-2.0.5-cp38-none-win32.whl
 pyzmq==24.0.1
 requests==2.28.1
 Send2Trash==1.8.0
