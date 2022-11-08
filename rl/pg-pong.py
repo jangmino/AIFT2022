@@ -1,3 +1,11 @@
+"""
+참고: http://karpathy.github.io/2016/05/31/rl/
+
+준비
+AIFT64 env 에서, 아래 추가 설치후
+pip install "ray[default,rllib]==2.0.0" "gym[atari]" "gym[accept-rom-license]" atari_py
+"""
+
 """ Trains an agent with (stochastic) Policy Gradients on Pong. Uses OpenAI Gym. """
 import numpy as np
 import pickle
